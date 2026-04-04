@@ -1713,7 +1713,7 @@ async function handlePDFUpload(input) {
     let usedAI = false;
 
     if (_orKey && isOnline) {
-      parsed = await parseExamWithOpenRouter(_lastPDFText);
+      parsed = await parseExamWithOpenRouter(_lastPDFText, status);
       usedAI = true;
     } else {
       parsed = localParseExamText(_lastPDFText);
@@ -1727,6 +1727,10 @@ async function handlePDFUpload(input) {
     document.getElementById('ex-parser-source').textContent = (usedAI ? 'AI' : 'Local') + ' · ' + file.name;
     toast('Exam Loaded!', `${EXAM.tasks.length} tasks — review & edit below`, 0, 'success');
     openReviewEditor();
+    // Auto-generate solutions immediately when online (examiner can still edit/regen)
+    if (_orKey && isOnline) {
+      setTimeout(() => generateSolutions(true), 400);
+    }
 
   } catch(err) {
     let msg = err.message;
@@ -1748,15 +1752,47 @@ async function handlePDFUpload(input) {
 }
 
 // ══════════════════════════════════════════════════════════════
-//  OPENROUTER PARSE  (no rate-limit retry needed — PDF.js handles reading)
+//  OPENROUTER PARSE  — tries multiple free models in cascade
 // ══════════════════════════════════════════════════════════════
-async function parseExamWithOpenRouter(pdfText) {
-  const body = {
-    model: 'google/gemma-2-9b-it:free',
-    max_tokens: 1200,
-    messages: [{
-      role: 'user',
-      content: `You are an exam parser. Extract the exam structure from the text below and return ONLY a valid JSON object, no markdown, no explanation:
+const OR_MODELS = [
+  'meta-llama/llama-3.1-8b-instruct:free',
+  'mistralai/mistral-7b-instruct:free',
+  'google/gemma-2-9b-it:free',
+  'nousresearch/hermes-3-llama-3.1-405b:free'
+];
+
+async function orChat(messages, maxTokens, statusEl) {
+  for (let i = 0; i < OR_MODELS.length; i++) {
+    const model = OR_MODELS[i];
+    if (statusEl) statusEl.textContent = `⟳ Trying model ${i+1}/${OR_MODELS.length}: ${model.split('/')[1]}…`;
+    try {
+      const resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${_orKey}`,
+          'HTTP-Referer': 'https://mubs.ac.ug',
+          'X-Title': 'MUBS Exam Grader'
+        },
+        body: JSON.stringify({ model, max_tokens: maxTokens, messages })
+      });
+      if (resp.status === 404 || resp.status === 503) continue; // try next model
+      if (!resp.ok) throw new Error(`API ${resp.status}`);
+      const data = await resp.json();
+      const content = data.choices?.[0]?.message?.content || '';
+      if (!content) continue;
+      return { content, model };
+    } catch (e) {
+      if (i === OR_MODELS.length - 1) throw e; // last model — rethrow
+    }
+  }
+  throw new Error('All AI models unavailable — check OpenRouter status or try again later');
+}
+
+async function parseExamWithOpenRouter(pdfText, statusEl) {
+  const { content } = await orChat([{
+    role: 'user',
+    content: `You are an exam parser. Extract the exam structure from the text below and return ONLY a valid JSON object, no markdown, no explanation:
 {
   "title": "course name",
   "courseCode": "CODE",
@@ -1771,27 +1807,9 @@ async function parseExamWithOpenRouter(pdfText) {
 Types: install_package | start_service | enable_service | start_and_enable | create_file | verify_content | access_url | check_status | custom
 PDF TEXT:
 ${pdfText.substring(0, 6000)}`
-    }]
-  };
+  }], 1200, statusEl);
 
-  const resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${_orKey}`,
-      'HTTP-Referer': 'https://mubs.ac.ug',
-      'X-Title': 'MUBS Exam Grader'
-    },
-    body: JSON.stringify(body)
-  });
-
-  if (!resp.ok) {
-    const err = new Error(`API ${resp.status}`);
-    throw err;
-  }
-  const data  = await resp.json();
-  const raw   = data.choices?.[0]?.message?.content || '';
-  const clean = raw.replace(/```json|```/g, '').trim();
+  const clean = content.replace(/```json|```/g, '').trim();
   const start = clean.indexOf('{');
   const end   = clean.lastIndexOf('}');
   if (start === -1 || end === -1) throw new Error('AI returned invalid JSON');
@@ -1849,7 +1867,7 @@ function localParseExamText(text) {
 // ══════════════════════════════════════════════════════════════
 let _examSolutions = {}; // taskId -> solution text
 
-async function generateSolutions() {
+async function generateSolutions(isAuto) {
   if (!_orKey) { toast('No API Key', 'Save your OpenRouter key first.', 0, 'error'); return; }
   if (!isOnline) { toast('Offline', 'Internet required to generate solutions.', 0, 'error'); return; }
 
@@ -1858,7 +1876,9 @@ async function generateSolutions() {
   btn.disabled = true;
   btn.textContent = '⟳ Generating…';
   st.className = 'ai-gen-status loading';
-  st.textContent = '⟳ Asking AI to generate expected answers…';
+  st.textContent = isAuto
+    ? '⟳ Auto-generating expected answers from parsed questions…'
+    : '⟳ Asking AI to generate expected answers…';
 
   // Build task list from current review editor
   const taskRows = document.querySelectorAll('#review-task-list .task-editor-row');
@@ -1888,24 +1908,9 @@ Tasks:
 ${taskList.map(t => `t${t.n}: [${t.marks} marks] ${t.label} — ${t.desc||t.type}`).join('\n')}`;
 
   try {
-    const resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${_orKey}`,
-        'HTTP-Referer': 'https://mubs.ac.ug',
-        'X-Title': 'MUBS Exam Grader'
-      },
-      body: JSON.stringify({
-        model: 'google/gemma-2-9b-it:free',
-        max_tokens: 1500,
-        messages: [{ role: 'user', content: prompt }]
-      })
-    });
-
-    if (!resp.ok) throw new Error(`API ${resp.status}`);
-    const data  = await resp.json();
-    const raw   = data.choices?.[0]?.message?.content || '';
+    const { content: raw, model: usedModel } = await orChat(
+      [{ role: 'user', content: prompt }], 1500, st
+    );
     const clean = raw.replace(/```json|```/g,'').trim();
     const start = clean.indexOf('{');
     const end   = clean.lastIndexOf('}');
@@ -1922,7 +1927,7 @@ ${taskList.map(t => `t${t.n}: [${t.marks} marks] ${t.label} — ${t.desc||t.type
     renderSolutionsEditor(taskList);
     st.className = 'ai-gen-status done';
     st.textContent = `✓ Solutions generated for ${taskList.length} tasks — review and edit below`;
-    toast('Solutions Ready', 'Review and fine-tune the expected answers below.', 0, 'success');
+    if (!isAuto) toast('Solutions Ready', 'Review and fine-tune the expected answers below.', 0, 'success');
 
   } catch(err) {
     st.className = 'ai-gen-status error';
@@ -1987,27 +1992,12 @@ async function regenOneSolution(key, label, desc) {
   if (btn) { btn.disabled = true; btn.textContent = '⟳'; }
 
   try {
-    const resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-      method:'POST',
-      headers:{
-        'Content-Type':'application/json',
-        'Authorization':`Bearer ${_orKey}`,
-        'HTTP-Referer':'https://mubs.ac.ug',
-        'X-Title':'MUBS Exam Grader'
-      },
-      body: JSON.stringify({
-        model:'google/gemma-2-9b-it:free', max_tokens:400,
-        messages:[{ role:'user',
-          content:`For a MUBS Ubuntu lab exam, write ONLY the exact expected solution/commands for this task (no explanation, just commands and brief notes):
+    const { content: sol } = await orChat([{ role:'user',
+      content:`For a MUBS Ubuntu lab exam, write ONLY the exact expected solution/commands for this task (no explanation, just commands and brief notes):
 Task: ${label}
 Description: ${desc || label}
-${_lastPDFText ? 'Context: '+_lastPDFText.substring(0,1000) : ''}` }]
-      })
-    });
-    if (!resp.ok) throw new Error(`API ${resp.status}`);
-    const data = await resp.json();
-    const sol  = data.choices?.[0]?.message?.content?.trim() || '';
-    _examSolutions[key] = sol;
+${_lastPDFText ? 'Context: '+_lastPDFText.substring(0,1000) : ''}` }], 400, null);
+    _examSolutions[key] = sol.trim();
     if (ta) ta.value = sol;
     toast('Regenerated', `Solution for ${label} updated.`, 0, 'success');
   } catch(err) {
