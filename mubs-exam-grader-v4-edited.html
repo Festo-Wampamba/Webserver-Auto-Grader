@@ -1,0 +1,3258 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MUBS — Real-Time VM Exam Grader v2.0</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Syne:wght@700;800&family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<style>
+/* ═══════════════════════════════════════════════════════════════
+   DESIGN SYSTEM — "Mission Control" aesthetic
+   Dark command-centre palette with surgical precision accents
+═══════════════════════════════════════════════════════════════ */
+:root {
+  --bg0: #090c10;
+  --bg1: #0e1318;
+  --bg2: #141b24;
+  --bg3: #1c2535;
+  --border: #253040;
+  --border-hi: #334155;
+  --text: #d4dce8;
+  --dim: #6b7e96;
+  --dimmer: #3d5068;
+
+  --green:  #22d3a0;
+  --green-d:#0d3328;
+  --green-b:#16a87e;
+  --amber:  #f59e0b;
+  --amber-d:#2d200a;
+  --red:    #f05050;
+  --red-d:  #2d0e0e;
+  --blue:   #3b9eff;
+  --blue-d: #0c1e38;
+  --purple: #a78bfa;
+  --cyan:   #22d3ee;
+
+  --term-bg:   #050810;
+  --term-text: #9dd5ff;
+  --prompt-c:  #3b9eff;
+
+  --font-ui:   'Figtree', sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+  --font-disp: 'Syne', sans-serif;
+
+  --panel-w: 360px;
+  --header-h: 52px;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { height: 100%; overflow: hidden; }
+body {
+  height: 100%; overflow: hidden;
+  background: var(--bg0);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 14px;
+}
+
+/* ─── SCROLLBARS ─── */
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border-hi); border-radius: 3px; }
+
+/* ═══════════════════════════════════════════════════════════════
+   SETUP SCREEN
+═══════════════════════════════════════════════════════════════ */
+#screen-setup {
+  height: 100vh;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  background: var(--bg0);
+  position: relative;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 24px 16px 48px;
+}
+/* Background grid */
+#screen-setup::before {
+  content: '';
+  position: absolute; inset: 0;
+  background-image:
+    linear-gradient(var(--bg2) 1px, transparent 1px),
+    linear-gradient(90deg, var(--bg2) 1px, transparent 1px);
+  background-size: 40px 40px;
+  opacity: 0.35;
+}
+/* Glow orb */
+#screen-setup::after {
+  content: '';
+  position: absolute;
+  top: -200px; left: 50%; transform: translateX(-50%);
+  width: 800px; height: 500px;
+  background: radial-gradient(ellipse at center, rgba(59,158,255,0.12) 0%, transparent 70%);
+  pointer-events: none;
+}
+
+.setup-card {
+  position: relative; z-index: 2;
+  width: 580px;
+  background: var(--bg1);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  overflow: visible;
+  box-shadow: 0 32px 96px rgba(0,0,0,0.7), 0 0 0 1px rgba(59,158,255,0.08);
+}
+
+.setup-brand {
+  padding: 28px 32px 20px;
+  border-bottom: 1px solid var(--border);
+  display: flex; align-items: flex-start; gap: 14px;
+}
+.setup-logo {
+  width: 44px; height: 44px; flex-shrink: 0;
+  background: linear-gradient(135deg, var(--blue), var(--cyan));
+  border-radius: 10px;
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--font-mono); font-size: 18px; font-weight: 700; color: #000;
+}
+.setup-brand-text h1 {
+  font-family: var(--font-disp);
+  font-size: 16px; font-weight: 800; color: var(--text);
+  letter-spacing: -0.02em;
+}
+.setup-brand-text p { font-size: 12px; color: var(--dim); margin-top: 2px; }
+
+/* Tabs */
+.setup-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+}
+.setup-tab {
+  flex: 1; padding: 12px 20px;
+  background: none; border: none;
+  font-family: var(--font-ui); font-size: 13px; font-weight: 600;
+  color: var(--dim); cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: all 0.2s;
+}
+.setup-tab.active { color: var(--blue); border-bottom-color: var(--blue); background: var(--blue-d); }
+.setup-tab:hover:not(.active) { color: var(--text); }
+
+.setup-body { padding: 28px 32px; }
+.setup-panel { display: none; }
+.setup-panel.active { display: block; }
+
+/* Form elements */
+.form-group { margin-bottom: 18px; }
+.form-label {
+  display: block; font-size: 12px; font-weight: 600;
+  color: var(--dim); letter-spacing: 0.06em; text-transform: uppercase;
+  margin-bottom: 6px;
+}
+.form-input {
+  width: 100%;
+  background: var(--bg2); border: 1px solid var(--border);
+  color: var(--text); font-family: var(--font-ui); font-size: 14px;
+  padding: 10px 14px; border-radius: 8px;
+  outline: none; transition: border-color 0.2s;
+}
+.form-input:focus { border-color: var(--blue); }
+.form-input::placeholder { color: var(--dimmer); }
+.form-row { display: flex; gap: 14px; }
+.form-row .form-group { flex: 1; }
+
+select.form-input { cursor: pointer; }
+
+/* Upload zone */
+.upload-zone {
+  border: 2px dashed var(--border);
+  border-radius: 10px;
+  padding: 32px 20px;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.2s;
+  background: var(--bg2);
+  position: relative;
+}
+.upload-zone:hover, .upload-zone.drag { border-color: var(--blue); background: var(--blue-d); }
+.upload-zone input[type=file] { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; }
+.upload-icon { font-size: 28px; margin-bottom: 8px; }
+.upload-title { font-size: 14px; font-weight: 600; color: var(--text); margin-bottom: 4px; }
+.upload-sub   { font-size: 12px; color: var(--dim); }
+.upload-file  { font-size: 12px; color: var(--green); margin-top: 6px; font-family: var(--font-mono); }
+
+.parse-status {
+  margin-top: 12px; padding: 10px 14px;
+  border-radius: 8px; font-size: 12px; font-family: var(--font-mono);
+  display: none;
+}
+.parse-status.loading { background: var(--blue-d); color: var(--blue); border: 1px solid var(--blue); display: block; }
+.parse-status.success { background: var(--green-d); color: var(--green); border: 1px solid var(--green); display: block; }
+.parse-status.error   { background: var(--red-d); color: var(--red); border: 1px solid var(--red); display: block; }
+
+/* Buttons */
+.btn {
+  width: 100%; padding: 12px 20px;
+  border: none; border-radius: 8px;
+  font-family: var(--font-ui); font-size: 14px; font-weight: 700;
+  cursor: pointer; transition: all 0.2s;
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+}
+.btn-primary { background: var(--blue); color: #000; }
+.btn-primary:hover { background: #5db0ff; transform: translateY(-1px); box-shadow: 0 6px 20px rgba(59,158,255,0.35); }
+.btn-success { background: var(--green); color: #000; }
+.btn-success:hover { filter: brightness(1.1); transform: translateY(-1px); box-shadow: 0 6px 20px rgba(34,211,160,0.35); }
+.btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none !important; box-shadow: none !important; }
+
+.setup-divider { display: flex; align-items: center; gap: 12px; margin: 18px 0; }
+.setup-divider hr { flex: 1; border: none; border-top: 1px solid var(--border); }
+.setup-divider span { font-size: 11px; color: var(--dimmer); text-transform: uppercase; letter-spacing: 0.1em; }
+
+.default-badge {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: var(--green-d); border: 1px solid var(--green-b);
+  color: var(--green); font-size: 11px; font-family: var(--font-mono); font-weight: 600;
+  padding: 5px 12px; border-radius: 6px; margin-bottom: 14px;
+}
+.parsed-tasks-preview {
+  margin-top: 12px;
+  background: var(--bg2); border: 1px solid var(--border);
+  border-radius: 8px; padding: 12px;
+  max-height: 200px; overflow-y: auto;
+  display: none;
+}
+.parsed-task-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 5px 0; border-bottom: 1px solid var(--border);
+  font-size: 12px;
+}
+.parsed-task-row:last-child { border-bottom: none; }
+.parsed-task-pts {
+  font-family: var(--font-mono); font-weight: 700; color: var(--amber);
+  min-width: 40px; text-align: right;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   SIMULATOR SCREEN
+═══════════════════════════════════════════════════════════════ */
+#screen-sim {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ─── HEADER ─── */
+.sim-header {
+  height: var(--header-h);
+  background: var(--bg1);
+  border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; padding: 0 16px; gap: 14px;
+  flex-shrink: 0;
+  position: relative; z-index: 10;
+}
+.sim-logo {
+  width: 32px; height: 32px;
+  background: linear-gradient(135deg, var(--blue), var(--cyan));
+  border-radius: 7px;
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--font-mono); font-size: 14px; font-weight: 700; color: #000;
+  flex-shrink: 0;
+}
+.sim-title { font-family: var(--font-disp); font-size: 13px; font-weight: 800; letter-spacing: -0.01em; }
+.sim-sub   { font-size: 11px; color: var(--dim); margin-top: 1px; }
+.sim-student-tag {
+  background: var(--bg2); border: 1px solid var(--border);
+  border-radius: 6px; padding: 4px 10px;
+  font-family: var(--font-mono); font-size: 11px; color: var(--cyan);
+  white-space: nowrap;
+}
+.hdr-sep { flex: 1; }
+
+/* Timer */
+.timer-wrap {
+  display: flex; align-items: center; gap: 8px;
+  background: var(--bg2); border: 1px solid var(--border);
+  border-radius: 8px; padding: 6px 14px;
+}
+.timer-icon { font-size: 13px; }
+#timer-display {
+  font-family: var(--font-mono); font-size: 16px; font-weight: 700;
+  color: var(--green); transition: color 0.5s; letter-spacing: 0.05em;
+  min-width: 58px;
+}
+.timer-wrap.warn  #timer-display { color: var(--amber); }
+.timer-wrap.urgent #timer-display { color: var(--red); animation: pulse-red 1s ease infinite; }
+
+/* Score */
+.score-wrap {
+  display: flex; align-items: center; gap: 6px;
+  background: var(--bg2); border: 1px solid var(--border);
+  border-radius: 8px; padding: 6px 14px;
+}
+.score-label-sm { font-size: 11px; color: var(--dim); }
+#hdr-score {
+  font-family: var(--font-mono); font-size: 20px; font-weight: 700; color: var(--green);
+  transition: all 0.4s; min-width: 28px; text-align: right;
+}
+.score-max { font-size: 11px; color: var(--dimmer); }
+
+.btn-examiner {
+  background: var(--bg2); border: 1px solid var(--border);
+  color: var(--dim); font-size: 11px; font-family: var(--font-ui); font-weight: 600;
+  padding: 6px 12px; border-radius: 6px; cursor: pointer;
+  transition: all 0.2s;
+}
+.btn-examiner:hover { border-color: var(--purple); color: var(--purple); }
+.btn-reset-sm {
+  background: transparent; border: 1px solid var(--border);
+  color: var(--dimmer); font-size: 11px; font-family: var(--font-ui);
+  padding: 6px 12px; border-radius: 6px; cursor: pointer; transition: all 0.2s;
+}
+.btn-reset-sm:hover { border-color: var(--red); color: var(--red); }
+
+/* ─── MAIN BODY ─── */
+.sim-body { flex: 1; display: flex; overflow: hidden; }
+
+/* ─── TERMINAL ─── */
+.term-pane {
+  flex: 1; display: flex; flex-direction: column;
+  background: var(--term-bg); min-width: 0; position: relative;
+}
+.term-titlebar {
+  height: 30px; background: #0c1020;
+  border-bottom: 1px solid #1a2030;
+  display: flex; align-items: center; padding: 0 12px; gap: 7px; flex-shrink: 0;
+}
+.tdot { width: 10px; height: 10px; border-radius: 50%; }
+.tdot-r { background: #ff5f56; }
+.tdot-y { background: #ffbd2e; }
+.tdot-g { background: #27c93f; }
+.term-bar-label {
+  font-family: var(--font-mono); font-size: 11px; color: #3d5068;
+  margin: 0 auto;
+}
+
+#term-output {
+  flex: 1; overflow-y: auto; padding: 10px 16px;
+  font-family: var(--font-mono); font-size: 12.5px; line-height: 1.75;
+  min-height: 0;
+}
+.tl { white-space: pre-wrap; word-break: break-all; }
+.tc-default { color: var(--term-text); }
+.tc-success { color: var(--green); }
+.tc-error   { color: var(--red); }
+.tc-warn    { color: var(--amber); }
+.tc-info    { color: var(--cyan); }
+.tc-dim     { color: #4a6080; }
+.tc-bold    { color: #e2eaf5; font-weight: 600; }
+.tc-prompt  { color: var(--prompt-c); }
+.tc-award   { color: var(--purple); font-weight: 700; }
+
+.term-input-row {
+  flex-shrink: 0;
+  display: flex; align-items: center;
+  padding: 8px 16px;
+  border-top: 1px solid #1a2030;
+}
+.prompt-str {
+  font-family: var(--font-mono); font-size: 12.5px; color: var(--prompt-c);
+  white-space: nowrap; user-select: none;
+}
+#cmd-input {
+  flex: 1; background: transparent; border: none; outline: none;
+  color: var(--text); font-family: var(--font-mono); font-size: 12.5px;
+  caret-color: var(--green); padding: 0 8px;
+}
+
+/* ─── NANO OVERLAY ─── */
+#nano-overlay {
+  display: none; position: absolute; inset: 0;
+  background: #030508; flex-direction: column; z-index: 50;
+}
+.nano-hdr {
+  background: #111820; padding: 6px 16px;
+  display: flex; align-items: center; justify-content: space-between;
+  font-family: var(--font-mono); font-size: 12px; color: #8899aa;
+  border-bottom: 1px solid #1a2535; flex-shrink: 0;
+}
+.nano-hdr span { color: var(--cyan); font-weight: 600; }
+#nano-filepath { color: var(--amber); }
+#nano-ta {
+  flex: 1; background: #030508; color: #33ff66;
+  font-family: var(--font-mono); font-size: 12.5px; line-height: 1.75;
+  border: none; outline: none; resize: none; padding: 14px 18px;
+}
+.nano-ftr {
+  background: #111820; border-top: 1px solid #1a2535;
+  padding: 6px 16px; display: flex; flex-wrap: wrap; gap: 16px; flex-shrink: 0;
+}
+.nano-shortcut { font-family: var(--font-mono); font-size: 11px; color: #6688aa; }
+.nano-shortcut b { color: #ccc; background: #222; padding: 1px 5px; border-radius: 3px; }
+.nano-actions { display: flex; gap: 8px; padding: 8px 16px; border-top: 1px solid #1a2535; flex-shrink: 0; }
+.nano-btn { flex: 1; padding: 7px; border-radius: 6px; font-family: var(--font-ui); font-size: 12px; font-weight: 700; cursor: pointer; border: none; }
+.nano-save { background: var(--green); color: #000; }
+.nano-discard { background: #1a2535; color: #8899aa; }
+
+/* ─── TASK PANEL ─── */
+.task-panel {
+  width: var(--panel-w); flex-shrink: 0;
+  background: var(--bg1); border-left: 1px solid var(--border);
+  display: flex; flex-direction: column; overflow: hidden;
+}
+.panel-hdr {
+  padding: 14px 16px 10px; border-bottom: 1px solid var(--border); flex-shrink: 0;
+  display: flex; align-items: center; gap: 10px;
+}
+.panel-hdr-title { font-family: var(--font-disp); font-size: 13px; font-weight: 800; flex: 1; }
+.panel-hdr-course { font-size: 10px; color: var(--dim); font-family: var(--font-mono); }
+
+/* 4-state legend */
+.state-legend {
+  padding: 8px 16px; border-bottom: 1px solid var(--border);
+  display: flex; gap: 10px; flex-shrink: 0; flex-wrap: wrap;
+}
+.legend-dot { display: flex; align-items: center; gap: 5px; font-size: 10px; color: var(--dim); }
+.ldot { width: 7px; height: 7px; border-radius: 50%; }
+.ldot-u { background: var(--dimmer); }
+.ldot-p { background: var(--blue); }
+.ldot-c { background: var(--green); }
+.ldot-f { background: var(--red); }
+
+#task-list {
+  flex: 1; overflow-y: auto; padding: 10px;
+}
+
+/* Task card — 4 states */
+.task-card {
+  background: var(--bg2); border: 1px solid var(--border);
+  border-radius: 9px; padding: 11px 13px; margin-bottom: 8px;
+  transition: border-color 0.3s, background 0.3s;
+  position: relative;
+}
+.task-card.state-unattempted { border-color: var(--border); }
+.task-card.state-inprogress  { border-color: var(--blue);  background: var(--blue-d); }
+.task-card.state-completed   { border-color: var(--green); background: var(--green-d); }
+.task-card.state-failed      { border-color: var(--red);   background: var(--red-d); }
+
+.task-top { display: flex; align-items: flex-start; gap: 9px; margin-bottom: 5px; }
+.task-state-icon { font-size: 15px; flex-shrink: 0; line-height: 1.4; }
+.task-label { font-size: 12px; font-weight: 600; color: var(--text); flex: 1; line-height: 1.4; }
+.task-card.state-unattempted .task-label { color: var(--dim); }
+
+.task-desc-text { font-size: 11px; color: var(--dim); margin-bottom: 7px; padding-left: 24px; line-height: 1.5; }
+.task-card.state-inprogress .task-desc-text,
+.task-card.state-completed .task-desc-text  { color: #8899aa; }
+
+/* Progress bar */
+.task-bar-bg { height: 3px; background: var(--bg3); border-radius: 2px; overflow: hidden; margin-bottom: 5px; }
+.task-bar-fill { height: 100%; border-radius: 2px; transition: width 0.5s ease, background 0.3s; }
+.state-unattempted .task-bar-fill { background: var(--dimmer); width: 0%; }
+.state-inprogress  .task-bar-fill { background: var(--blue); }
+.state-completed   .task-bar-fill { background: var(--green); width: 100% !important; }
+.state-failed      .task-bar-fill { background: var(--red); }
+
+.task-pts-row {
+  display: flex; align-items: center; justify-content: space-between;
+}
+.task-pts-earned {
+  font-family: var(--font-mono); font-size: 11px; font-weight: 700;
+}
+.state-unattempted .task-pts-earned { color: var(--dimmer); }
+.state-inprogress  .task-pts-earned { color: var(--blue); }
+.state-completed   .task-pts-earned { color: var(--green); }
+.state-failed      .task-pts-earned { color: var(--red); }
+
+.task-state-badge {
+  font-size: 9px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+  padding: 2px 7px; border-radius: 4px; font-family: var(--font-mono);
+}
+.state-unattempted .task-state-badge { background: var(--bg3); color: var(--dimmer); }
+.state-inprogress  .task-state-badge { background: rgba(59,158,255,0.2); color: var(--blue); }
+.state-completed   .task-state-badge { background: rgba(34,211,160,0.2); color: var(--green); }
+.state-failed      .task-state-badge { background: rgba(240,80,80,0.2); color: var(--red); }
+
+/* ─── PANEL FOOTER ─── */
+.panel-footer {
+  padding: 14px 16px; border-top: 1px solid var(--border); flex-shrink: 0;
+}
+.total-row { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 8px; }
+.total-label { font-family: var(--font-disp); font-size: 13px; font-weight: 700; }
+.total-val {
+  font-family: var(--font-mono); font-size: 28px; font-weight: 700; color: var(--green);
+  transition: color 0.4s;
+}
+.total-max { font-size: 12px; color: var(--dim); }
+#grand-bar-bg { height: 5px; background: var(--bg3); border-radius: 3px; overflow: hidden; margin-bottom: 10px; }
+#grand-bar-fill { height: 100%; background: var(--green); border-radius: 3px; transition: width 0.6s ease, background 0.4s; width: 0%; }
+
+.btn-view-page {
+  display: none; width: 100%;
+  background: var(--blue-d); border: 1px solid var(--blue);
+  color: var(--blue); font-family: var(--font-ui); font-size: 12px; font-weight: 700;
+  padding: 8px; border-radius: 7px; cursor: pointer; transition: all 0.2s;
+}
+.btn-view-page:hover { background: var(--blue); color: #000; }
+
+/* ─── BROWSER PREVIEW OVERLAY ─── */
+#preview-overlay {
+  display: none; position: fixed; inset: 0;
+  background: rgba(0,0,0,0.8); z-index: 200;
+  align-items: center; justify-content: center;
+}
+.preview-window {
+  width: 82vw; max-width: 940px; height: 82vh;
+  background: #fff; border-radius: 12px; overflow: hidden;
+  display: flex; flex-direction: column;
+  box-shadow: 0 30px 100px rgba(0,0,0,0.8);
+}
+.preview-chrome {
+  background: #e8e8e8; padding: 8px 14px;
+  display: flex; align-items: center; gap: 8px;
+  border-bottom: 1px solid #ccc; flex-shrink: 0;
+}
+.pch-dot { width: 11px; height: 11px; border-radius: 50%; }
+.pch-r { background: #ff5f56; } .pch-y { background: #ffbd2e; } .pch-g { background: #27c93f; }
+.preview-url-bar {
+  flex: 1; background: #fff; border: 1px solid #ccc;
+  border-radius: 5px; padding: 4px 12px; font-size: 12px; color: #333;
+  font-family: var(--font-mono);
+}
+.preview-close-btn {
+  background: #ccc; border: none; border-radius: 5px;
+  padding: 5px 12px; cursor: pointer; font-size: 12px; font-weight: 700;
+}
+#preview-frame { flex: 1; border: none; width: 100%; }
+
+/* ─── EXAMINER OVERLAY ─── */
+#examiner-overlay {
+  display: none; position: fixed; inset: 0;
+  background: rgba(0,0,0,0.8); z-index: 300;
+  align-items: flex-start; justify-content: flex-end; padding: 52px 0 0 0;
+}
+.examiner-panel {
+  width: 520px; height: 100%;
+  background: var(--bg1); border-left: 1px solid var(--border);
+  display: flex; flex-direction: column;
+  box-shadow: -20px 0 80px rgba(0,0,0,0.6);
+  overflow: hidden;
+}
+.ex-hdr {
+  padding: 20px 24px 16px; border-bottom: 1px solid var(--border); flex-shrink: 0;
+  display: flex; align-items: center; justify-content: space-between;
+}
+.ex-hdr h2 { font-family: var(--font-disp); font-size: 17px; font-weight: 800; }
+.ex-close { background: none; border: 1px solid var(--border); color: var(--dim); font-size: 13px; font-family: var(--font-ui); padding: 6px 12px; border-radius: 6px; cursor: pointer; }
+.ex-close:hover { border-color: var(--red); color: var(--red); }
+
+.ex-tabs { display: flex; border-bottom: 1px solid var(--border); }
+.ex-tab {
+  flex: 1; padding: 10px; background: none; border: none;
+  font-family: var(--font-ui); font-size: 12px; font-weight: 600;
+  color: var(--dim); cursor: pointer;
+  border-bottom: 2px solid transparent; transition: all 0.2s;
+}
+.ex-tab.active { color: var(--purple); border-bottom-color: var(--purple); }
+
+.ex-body { flex: 1; overflow-y: auto; }
+.ex-panel { display: none; padding: 20px 24px; }
+.ex-panel.active { display: block; }
+
+/* Examiner info blocks */
+.ex-info-block {
+  background: var(--bg2); border: 1px solid var(--border);
+  border-radius: 8px; padding: 14px 16px; margin-bottom: 14px;
+}
+.ex-info-block h3 { font-size: 11px; font-weight: 700; color: var(--dim); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 10px; }
+.ex-row { display: flex; align-items: center; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid var(--border); }
+.ex-row:last-child { border-bottom: none; }
+.ex-row-k { font-size: 12px; color: var(--dim); }
+.ex-row-v { font-size: 12px; font-family: var(--font-mono); color: var(--text); font-weight: 600; }
+
+/* Task override */
+.ex-task-override {
+  background: var(--bg2); border: 1px solid var(--border);
+  border-radius: 8px; padding: 12px; margin-bottom: 8px;
+}
+.ex-task-override-top { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.ex-task-override-label { font-size: 12px; font-weight: 600; flex: 1; }
+.ex-task-override-pts { font-family: var(--font-mono); font-size: 12px; font-weight: 700; color: var(--amber); }
+.override-input {
+  width: 70px; background: var(--bg3); border: 1px solid var(--border);
+  color: var(--text); font-family: var(--font-mono); font-size: 12px;
+  padding: 4px 8px; border-radius: 5px; outline: none; text-align: center;
+}
+.override-input:focus { border-color: var(--amber); }
+.btn-override-set {
+  background: var(--amber-d); border: 1px solid var(--amber); color: var(--amber);
+  font-family: var(--font-ui); font-size: 11px; font-weight: 700;
+  padding: 4px 10px; border-radius: 5px; cursor: pointer; transition: all 0.2s;
+}
+.btn-override-set:hover { background: var(--amber); color: #000; }
+
+/* VMware bridge docs */
+.bridge-section { margin-bottom: 20px; }
+.bridge-section h3 {
+  font-size: 12px; font-weight: 700; color: var(--cyan); text-transform: uppercase;
+  letter-spacing: 0.08em; margin-bottom: 10px; font-family: var(--font-mono);
+}
+.bridge-arch {
+  background: var(--bg0); border: 1px solid var(--border); border-radius: 8px;
+  padding: 14px 16px; font-family: var(--font-mono); font-size: 11px;
+  color: #6699aa; line-height: 1.8; overflow-x: auto;
+}
+.bridge-arch .bl { color: var(--blue); }
+.bridge-arch .gn { color: var(--green); }
+.bridge-arch .am { color: var(--amber); }
+.bridge-arch .cn { color: var(--cyan); }
+
+.ws-status {
+  display: flex; align-items: center; gap: 8px; margin-top: 10px;
+  background: var(--bg2); border: 1px solid var(--border);
+  border-radius: 7px; padding: 10px 14px;
+}
+.ws-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--dimmer); }
+.ws-dot.connected { background: var(--green); animation: blink 1.5s ease infinite; }
+.ws-label { font-size: 12px; color: var(--dim); flex: 1; font-family: var(--font-mono); }
+.btn-ws {
+  background: var(--bg3); border: 1px solid var(--border);
+  color: var(--text); font-size: 11px; font-family: var(--font-ui); font-weight: 600;
+  padding: 4px 12px; border-radius: 5px; cursor: pointer; transition: all 0.2s;
+}
+.btn-ws:hover { border-color: var(--green); color: var(--green); }
+
+/* Code block in examiner panel */
+.code-block {
+  background: var(--bg0); border: 1px solid var(--border);
+  border-radius: 8px; padding: 12px 14px; margin-top: 8px;
+  font-family: var(--font-mono); font-size: 10.5px; color: #7ab8d4;
+  line-height: 1.7; overflow-x: auto; white-space: pre;
+  max-height: 200px; overflow-y: auto;
+}
+.code-block .comment { color: #445566; }
+.code-block .keyword { color: var(--blue); }
+.code-block .string  { color: var(--green); }
+
+/* ─── TOAST ─── */
+#toast-stack {
+  position: fixed; top: 58px; right: 16px;
+  display: flex; flex-direction: column; gap: 8px;
+  z-index: 500; pointer-events: none;
+}
+.toast-card {
+  background: var(--bg1); border: 1px solid var(--border);
+  border-left: 4px solid var(--green);
+  border-radius: 9px; padding: 11px 15px;
+  min-width: 270px; max-width: 330px;
+  box-shadow: 0 10px 40px rgba(0,0,0,0.6);
+  animation: toastIn 0.3s ease forwards;
+  pointer-events: auto;
+}
+.toast-card.warn   { border-left-color: var(--amber); }
+.toast-card.error  { border-left-color: var(--red); }
+.toast-card.info   { border-left-color: var(--blue); }
+.toast-card.prog   { border-left-color: var(--blue); }
+.toast-title { font-size: 13px; font-weight: 700; color: var(--text); margin-bottom: 2px; }
+.toast-body  { font-size: 12px; color: var(--dim); line-height: 1.4; }
+.toast-pts   { font-family: var(--font-mono); font-size: 11px; color: var(--green); margin-top: 4px; font-weight: 700; }
+
+/* ─── ANIMATIONS ─── */
+@keyframes toastIn  { from { opacity:0; transform: translateX(30px); } to { opacity:1; transform: translateX(0); } }
+@keyframes toastOut { from { opacity:1; transform: translateX(0); } to { opacity:0; transform: translateX(30px); } }
+@keyframes pulse-red { 0%,100%{ opacity:1; } 50%{ opacity:0.5; } }
+@keyframes blink     { 0%,100%{ opacity:1; } 50%{ opacity:0.3; } }
+@keyframes scoreJump { 0%,100%{ transform: scale(1); } 50%{ transform: scale(1.25); } }
+
+/* Status bar */
+.status-bar {
+  height: 22px; background: var(--bg2); border-top: 1px solid var(--border);
+  display: flex; align-items: center; padding: 0 16px; gap: 20px; flex-shrink: 0;
+}
+.sb-item { font-size: 10px; font-family: var(--font-mono); color: var(--dimmer); display: flex; align-items: center; gap: 5px; }
+.sb-dot  { width: 6px; height: 6px; border-radius: 50%; background: var(--dimmer); }
+.sb-dot.ok { background: var(--green); }
+
+/* ─── MANUAL SETUP & REVIEW EDITOR ─── */
+.setup-section-toggle {
+  display: flex; align-items: center; justify-content: space-between;
+  background: var(--bg2); border: 1px solid var(--border);
+  border-radius: 8px; padding: 10px 14px; cursor: pointer;
+  transition: border-color 0.2s; margin-bottom: 0;
+}
+.setup-section-toggle:hover { border-color: var(--blue); }
+.setup-section-toggle .tog-title { font-size: 13px; font-weight: 600; color: var(--text); }
+.setup-section-toggle .tog-sub   { font-size: 11px; color: var(--dim); margin-top: 2px; }
+.setup-section-toggle .tog-arrow { color: var(--dim); font-size: 13px; transition: transform 0.2s; }
+.setup-section-toggle.open .tog-arrow { transform: rotate(180deg); color: var(--blue); }
+
+.collapsible-body {
+  display: none; border: 1px solid var(--border); border-top: none;
+  border-radius: 0 0 8px 8px; padding: 16px;
+  background: var(--bg2); margin-bottom: 14px;
+}
+.collapsible-body.open { display: block; }
+
+/* Review editor panel */
+#review-editor {
+  display: none; margin-top: 14px;
+  border: 1px solid var(--blue); border-radius: 10px;
+  background: var(--blue-d); overflow: hidden;
+}
+.review-hdr {
+  padding: 12px 16px; background: rgba(59,158,255,0.12);
+  border-bottom: 1px solid var(--blue);
+  display: flex; align-items: center; justify-content: space-between;
+}
+.review-hdr h3 { font-size: 13px; font-weight: 700; color: var(--blue); }
+.review-hdr p  { font-size: 11px; color: var(--dim); margin-top: 2px; }
+.review-body { padding: 14px 16px; }
+
+.exam-meta-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px; }
+.exam-meta-grid .form-group { margin-bottom: 0; }
+
+.task-editor-list { margin-bottom: 12px; }
+.task-editor-row {
+  background: var(--bg1); border: 1px solid var(--border);
+  border-radius: 8px; padding: 10px 12px; margin-bottom: 8px;
+}
+.task-editor-row-top {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 8px;
+}
+.task-editor-num {
+  background: var(--bg3); color: var(--dim); font-family: var(--font-mono);
+  font-size: 11px; font-weight: 700; padding: 3px 8px; border-radius: 5px;
+  min-width: 30px; text-align: center; flex-shrink: 0;
+}
+.task-editor-inputs { display: flex; gap: 8px; flex: 1; flex-wrap: wrap; }
+.task-editor-inputs .form-input { font-size: 12px; padding: 7px 10px; }
+.task-editor-label-input { flex: 2; min-width: 120px; }
+.task-editor-marks-input { width: 70px; flex-shrink: 0; text-align: center; }
+.task-editor-type-input  { flex: 1.5; min-width: 120px; }
+.task-editor-desc { width: 100%; margin-top: 6px; }
+.btn-task-del {
+  background: transparent; border: 1px solid var(--border);
+  color: var(--dimmer); font-size: 13px; border-radius: 5px;
+  padding: 5px 9px; cursor: pointer; transition: all 0.2s; flex-shrink: 0;
+}
+.btn-task-del:hover { border-color: var(--red); color: var(--red); background: var(--red-d); }
+
+.btn-add-task {
+  width: 100%; padding: 9px; border: 1px dashed var(--border);
+  background: transparent; color: var(--dim); border-radius: 7px;
+  font-family: var(--font-ui); font-size: 12px; font-weight: 600;
+  cursor: pointer; transition: all 0.2s; margin-bottom: 12px;
+}
+.btn-add-task:hover { border-color: var(--green); color: var(--green); background: var(--green-d); }
+
+.btn-proceed {
+  width: 100%; padding: 11px; background: var(--green); color: #000;
+  border: none; border-radius: 8px; font-family: var(--font-ui);
+  font-size: 14px; font-weight: 700; cursor: pointer; transition: all 0.2s;
+}
+.btn-proceed:hover { filter: brightness(1.1); transform: translateY(-1px); box-shadow: 0 6px 20px rgba(34,211,160,0.35); }
+
+.review-total-bar {
+  display: flex; align-items: center; justify-content: space-between;
+  background: var(--bg1); border: 1px solid var(--border);
+  border-radius: 7px; padding: 8px 12px; margin-bottom: 12px;
+  font-size: 12px;
+}
+.review-total-bar .rtb-label { color: var(--dim); }
+.review-total-bar .rtb-val   { font-family: var(--font-mono); font-weight: 700; color: var(--amber); font-size: 14px; }
+
+/* ─── END MANUAL SETUP ─── */
+
+/* ─── INTERNET STATUS BADGE ─── */
+.inet-badge {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 11px; font-family: var(--font-mono); font-weight: 600;
+  padding: 5px 10px; border-radius: 6px; margin-bottom: 12px;
+  transition: all 0.3s;
+}
+.inet-badge.online  { background: var(--green-d); border: 1px solid var(--green-b); color: var(--green); }
+.inet-badge.offline { background: var(--red-d);   border: 1px solid var(--red);     color: var(--red); }
+.inet-badge.checking{ background: var(--blue-d);  border: 1px solid var(--blue);    color: var(--blue); }
+.inet-dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.inet-badge.online  .inet-dot { animation: blink 1.8s ease infinite; }
+
+/* ─── OPENROUTER KEY SECTION ─── */
+.ai-key-section {
+  background: var(--bg2); border: 1px solid var(--border);
+  border-radius: 9px; padding: 12px 14px; margin-bottom: 14px;
+}
+.ai-key-header {
+  display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;
+}
+.ai-key-title { font-size: 12px; font-weight: 700; color: var(--cyan); }
+.ai-key-badge {
+  font-size: 10px; font-family: var(--font-mono); font-weight: 600;
+  background: var(--green-d); border: 1px solid var(--green-b); color: var(--green);
+  padding: 2px 8px; border-radius: 4px;
+}
+.ai-key-row { display: flex; gap: 8px; align-items: center; }
+.ai-key-input {
+  flex: 1; background: var(--bg3); border: 1px solid var(--border);
+  color: var(--text); font-family: var(--font-mono); font-size: 12px;
+  padding: 8px 10px; border-radius: 7px; outline: none; transition: border-color 0.2s;
+}
+.ai-key-input:focus { border-color: var(--cyan); }
+.ai-key-input::placeholder { color: var(--dimmer); }
+.btn-save-key {
+  background: var(--cyan); color: #000; border: none; border-radius: 7px;
+  font-family: var(--font-ui); font-size: 12px; font-weight: 700;
+  padding: 8px 14px; cursor: pointer; transition: all 0.2s; white-space: nowrap;
+}
+.btn-save-key:hover { filter: brightness(1.1); }
+.ai-key-status { font-size: 11px; margin-top: 6px; font-family: var(--font-mono); }
+.ai-key-status.saved { color: var(--green); }
+.ai-key-status.empty { color: var(--dimmer); }
+.ai-key-help { font-size: 11px; color: var(--dimmer); margin-top: 5px; line-height: 1.5; }
+.ai-key-help a { color: var(--cyan); text-decoration: none; }
+
+/* ─── SOLUTIONS EDITOR ─── */
+.solutions-section {
+  display: none; margin-top: 10px;
+  border: 1px solid var(--purple); border-radius: 9px;
+  background: rgba(167,139,250,0.05); overflow: hidden;
+}
+.solutions-hdr {
+  padding: 10px 14px; background: rgba(167,139,250,0.1);
+  border-bottom: 1px solid var(--purple);
+  display: flex; align-items: center; justify-content: space-between;
+}
+.solutions-hdr h4 { font-size: 12px; font-weight: 700; color: var(--purple); }
+.solutions-hdr p  { font-size: 11px; color: var(--dim); margin-top: 1px; }
+.solutions-body { padding: 12px 14px; }
+
+.solution-item {
+  background: var(--bg1); border: 1px solid var(--border);
+  border-radius: 8px; padding: 10px 12px; margin-bottom: 8px;
+}
+.solution-item-label {
+  font-size: 11px; font-weight: 700; color: var(--purple);
+  font-family: var(--font-mono); margin-bottom: 6px;
+  display: flex; align-items: center; justify-content: space-between;
+}
+.solution-ta {
+  width: 100%; background: var(--bg3); border: 1px solid var(--border);
+  color: var(--term-text); font-family: var(--font-mono); font-size: 11.5px;
+  line-height: 1.6; padding: 8px 10px; border-radius: 6px;
+  outline: none; resize: vertical; min-height: 60px;
+  transition: border-color 0.2s;
+}
+.solution-ta:focus { border-color: var(--purple); }
+.solution-regen {
+  background: transparent; border: 1px solid var(--border); color: var(--dim);
+  font-size: 10px; font-family: var(--font-ui); font-weight: 600;
+  padding: 3px 8px; border-radius: 4px; cursor: pointer; transition: all 0.2s;
+}
+.solution-regen:hover { border-color: var(--purple); color: var(--purple); }
+
+.ai-gen-status {
+  padding: 8px 12px; border-radius: 7px; font-size: 11px;
+  font-family: var(--font-mono); margin-bottom: 10px; display: none;
+}
+.ai-gen-status.loading { background: rgba(167,139,250,0.1); color: var(--purple); border: 1px solid var(--purple); display: block; }
+.ai-gen-status.done    { background: var(--green-d); color: var(--green); border: 1px solid var(--green); display: block; }
+.ai-gen-status.error   { background: var(--red-d); color: var(--red); border: 1px solid var(--red); display: block; }
+
+.btn-gen-solutions {
+  width: 100%; padding: 9px; background: rgba(167,139,250,0.15);
+  border: 1px solid var(--purple); color: var(--purple);
+  border-radius: 7px; font-family: var(--font-ui); font-size: 12px; font-weight: 700;
+  cursor: pointer; transition: all 0.2s; margin-bottom: 10px;
+}
+.btn-gen-solutions:hover { background: rgba(167,139,250,0.25); }
+.btn-gen-solutions:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* ─── END AI CSS ─── */
+@media (max-width: 780px) {
+  :root { --panel-w: 280px; }
+  .setup-card { width: 95vw; }
+}
+</style>
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════════════════════
+     SCREEN 1: SETUP (Examiner config + Student onboarding)
+════════════════════════════════════════════════════════════ -->
+<div id="screen-setup">
+  <div class="setup-card">
+
+    <div class="setup-brand">
+      <div class="setup-logo">M</div>
+      <div class="setup-brand-text">
+        <h1>MUBS VM Exam Grader <span style="color:var(--dim);font-size:11px;font-weight:400">v2.0</span></h1>
+        <p>Real-time auto-marking for virtualized lab examinations</p>
+      </div>
+    </div>
+
+    <div class="setup-tabs">
+      <button class="setup-tab active" onclick="switchSetupTab('examiner')">⚙ Examiner Setup</button>
+      <button class="setup-tab" onclick="switchSetupTab('student')">🎓 Student Login</button>
+    </div>
+
+    <!-- EXAMINER TAB -->
+    <div class="setup-body">
+      <div id="tab-examiner" class="setup-panel active">
+
+        <!-- Internet Status -->
+        <div id="inet-badge" class="inet-badge checking">
+          <span class="inet-dot"></span>
+          <span id="inet-label">Checking connection…</span>
+        </div>
+
+        <!-- OpenRouter AI Key -->
+        <div class="ai-key-section" id="ai-key-section">
+          <div class="ai-key-header">
+            <span class="ai-key-title">🤖 AI Parser — OpenRouter</span>
+            <span class="ai-key-badge">FREE</span>
+          </div>
+          <div class="ai-key-row">
+            <input type="password" id="or-key" class="ai-key-input" placeholder="sk-or-v1-…  (paste your OpenRouter key)">
+            <button class="btn-save-key" onclick="saveORKey()">Save</button>
+          </div>
+          <div class="ai-key-status empty" id="ai-key-status">No key saved — AI parsing disabled</div>
+          <p class="ai-key-help">
+            Get a free API key at <a href="https://openrouter.ai" target="_blank">openrouter.ai</a> → Sign up → Keys.
+            Free models are $0/token. Key is saved locally in your browser.
+          </p>
+        </div>
+
+        <p style="font-size:12px;color:var(--dim);margin-bottom:14px;line-height:1.6">
+          Upload your exam paper PDF. The Query will parse the questions, marks, and learning outcomes, then automatically configure the grader. No manual setup needed.
+        </p>
+
+        <!-- OPTION A: PDF Upload -->
+        <div class="upload-zone" id="upload-zone">
+          <input type="file" id="pdf-upload" accept=".pdf,application/pdf" onchange="handlePDFUpload(this)" onclick="event.stopPropagation()">
+          <div class="upload-icon">📄</div>
+          <div class="upload-title">Drop exam paper here or click to browse</div>
+          <div class="upload-sub">Accepts PDF exam papers · Auto-parsed</div>
+          <div class="upload-file" id="upload-filename"></div>
+        </div>
+        <div class="parse-status" id="parse-status"></div>
+
+        <div class="setup-divider"><hr><span>or</span><hr></div>
+
+        <!-- OPTION B: Manual Setup -->
+        <div class="setup-section-toggle" id="manual-toggle" onclick="toggleManualSetup()">
+          <div>
+            <div class="tog-title">✏ Manual Exam Setup</div>
+            <div class="tog-sub">Enter questions, marks &amp; tasks by hand — no PDF needed</div>
+          </div>
+          <span class="tog-arrow">▼</span>
+        </div>
+        <div class="collapsible-body" id="manual-body">
+          <div class="exam-meta-grid">
+            <div class="form-group">
+              <label class="form-label">Course Title</label>
+              <input type="text" id="m-title" class="form-input" placeholder="e.g. Web Server Administration">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Course Code</label>
+              <input type="text" id="m-code" class="form-input" placeholder="e.g. BUC3219">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Exam Date</label>
+              <input type="text" id="m-date" class="form-input" placeholder="e.g. 26 March 2026">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Duration (minutes)</label>
+              <input type="number" id="m-duration" class="form-input" placeholder="90" value="90" min="10" max="300">
+            </div>
+          </div>
+          <label class="form-label" style="margin-bottom:8px">Tasks</label>
+          <div id="manual-task-list"></div>
+          <button class="btn-add-task" onclick="addManualTask()">+ Add Task</button>
+          <button class="btn btn-primary" onclick="applyManualExam()">✔ Apply Manual Exam</button>
+        </div>
+
+        <div class="setup-divider"><hr><span>or</span><hr></div>
+
+        <!-- OPTION C: Default Exam -->
+        <div class="default-badge">✓ Pre-loaded: BUC3219 Apache Exam (26 March 2026)</div>
+        <button class="btn btn-success" onclick="useDefaultExam()" id="btn-use-default">
+          ▶ Use Default Exam — No Upload Needed
+        </button>
+
+        <!-- REVIEW / EDIT PANEL -->
+        <div id="review-editor">
+          <div class="review-hdr">
+            <div>
+              <h3>📋 Review &amp; Edit Exam Configuration</h3>
+              <p>Verify details or correct any mistakes before proceeding</p>
+            </div>
+            <button style="background:transparent;border:1px solid var(--border);color:var(--dim);font-size:11px;padding:5px 10px;border-radius:5px;cursor:pointer" onclick="closeReviewEditor()">✕</button>
+          </div>
+          <div class="review-body">
+            <div class="exam-meta-grid">
+              <div class="form-group">
+                <label class="form-label">Course Title</label>
+                <input type="text" id="r-title" class="form-input" placeholder="Course title">
+              </div>
+              <div class="form-group">
+                <label class="form-label">Course Code</label>
+                <input type="text" id="r-code" class="form-input" placeholder="CODE">
+              </div>
+              <div class="form-group">
+                <label class="form-label">Exam Date</label>
+                <input type="text" id="r-date" class="form-input" placeholder="Date">
+              </div>
+              <div class="form-group">
+                <label class="form-label">Duration (min)</label>
+                <input type="number" id="r-duration" class="form-input" placeholder="90" min="10" max="300">
+              </div>
+            </div>
+            <label class="form-label" style="margin-bottom:8px">Tasks</label>
+            <div class="task-editor-list" id="review-task-list"></div>
+            <button class="btn-add-task" onclick="addReviewTask()">+ Add Task</button>
+            <div class="review-total-bar">
+              <span class="rtb-label">Total Marks</span>
+              <span class="rtb-val" id="review-total-display">0 marks</span>
+            </div>
+
+            <!-- SOLUTIONS GENERATOR -->
+            <div class="solutions-section" id="solutions-section">
+              <div class="solutions-hdr">
+                <div>
+                  <h4>🧠 AI-Generated Solutions / Expected Answers</h4>
+                  <p>Review and fine-tune before students sit the exam</p>
+                </div>
+              </div>
+              <div class="solutions-body">
+                <div class="ai-gen-status" id="ai-gen-status"></div>
+                <button class="btn-gen-solutions" id="btn-gen-solutions" onclick="generateSolutions()">
+                  ✨ Generate Expected Answers with AI
+                </button>
+                <div id="solutions-list"></div>
+              </div>
+            </div>
+
+            <button class="btn-proceed" onclick="proceedWithReviewedExam()">✔ Confirm &amp; Proceed to Student Login →</button>
+          </div>
+        </div>
+
+        <p style="font-size:11px;color:var(--dimmer);margin-top:12px;line-height:1.5">
+          After setup, share the grader URL (or HTML file) with students. Each student opens the Student Login tab to begin.
+        </p>
+      </div>
+
+      <!-- STUDENT TAB -->
+      <div id="tab-student" class="setup-panel">
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">Full Name</label>
+            <input type="text" id="s-name" class="form-input" placeholder="e.g. Festo Tumwebaaze">
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Registration Number</label>
+          <input type="text" id="s-reg" class="form-input" placeholder="e.g. 22/U/04567/PSA">
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">Shift</label>
+            <select id="s-shift" class="form-input">
+              <option value="1">Shift 1 — 8:00am – 9:30am</option>
+              <option value="2">Shift 2 — 10:00am – 11:30am</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Computer / VM No.</label>
+            <input type="text" id="s-vm" class="form-input" placeholder="e.g. LAB-PC-07">
+          </div>
+        </div>
+
+        <div id="student-login-warning" style="display:none;background:var(--red-d);border:1px solid var(--red);border-radius:7px;padding:10px 14px;font-size:12px;color:var(--red);margin-bottom:14px;"></div>
+
+        <button class="btn btn-primary" onclick="startStudentSession()" id="btn-start-exam">
+          🚀 Begin Exam Session
+        </button>
+        <p style="font-size:11px;color:var(--dimmer);margin-top:10px;text-align:center">
+          Timer starts immediately upon clicking Begin Exam Session
+        </p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════
+     SCREEN 2: SIMULATOR
+════════════════════════════════════════════════════════════ -->
+<div id="screen-sim" style="display:none;height:100vh;flex-direction:column">
+
+  <!-- HEADER -->
+  <header class="sim-header">
+    <div class="sim-logo">M</div>
+    <div>
+      <div class="sim-title" id="hdr-course-title">Web Server Administration</div>
+      <div class="sim-sub" id="hdr-course-sub">BUC3219 · MUBS</div>
+    </div>
+    <div class="sim-student-tag" id="hdr-student-tag">—</div>
+    <div class="hdr-sep"></div>
+
+    <div class="timer-wrap" id="timer-wrap">
+      <span class="timer-icon">⏱</span>
+      <span id="timer-display">1:30:00</span>
+    </div>
+
+    <div class="score-wrap">
+      <span class="score-label-sm">Score</span>
+      <span id="hdr-score">0</span>
+      <span class="score-max" id="hdr-score-max">/ 30</span>
+    </div>
+
+    <button class="btn-reset-sm" onclick="confirmReset()">↺</button>
+  </header>
+
+  <!-- BODY -->
+  <div class="sim-body">
+
+    <!-- TERMINAL -->
+    <div class="term-pane" id="term-pane">
+      <div class="term-titlebar">
+        <span class="tdot tdot-r"></span>
+        <span class="tdot tdot-y"></span>
+        <span class="tdot tdot-g"></span>
+        <span class="term-bar-label" id="term-bar-label">student@mubs-vm: ~</span>
+      </div>
+
+      <div id="term-output"></div>
+
+      <div class="term-input-row">
+        <span class="prompt-str" id="prompt-str">student@mubs-vm:~$&nbsp;</span>
+        <input id="cmd-input" type="text" autocomplete="off" spellcheck="false" placeholder="Type a Linux command…" autofocus>
+      </div>
+
+      <!-- NANO OVERLAY -->
+      <div id="nano-overlay" style="display:none;flex-direction:column">
+        <div class="nano-hdr">
+          <span>GNU nano 6.2</span>
+          <span id="nano-filepath">/var/www/html/index.html</span>
+          <span>Modified</span>
+        </div>
+        <textarea id="nano-ta" placeholder="Type HTML content here…"></textarea>
+        <div class="nano-ftr">
+          <span class="nano-shortcut"><b>Ctrl+X</b> Exit &amp; Save</span>
+          <span class="nano-shortcut"><b>Ctrl+S</b> Save</span>
+          <span class="nano-shortcut"><b>Tab</b> Indent 2 spaces</span>
+        </div>
+        <div class="nano-actions">
+          <button class="nano-btn nano-save" onclick="nanoSave()">Save &amp; Exit</button>
+          <button class="nano-btn nano-discard" onclick="nanoDiscard()">Discard</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- TASK PANEL -->
+    <div class="task-panel">
+      <div class="panel-hdr">
+        <div>
+          <div class="panel-hdr-title">Exam Tasks</div>
+          <div class="panel-hdr-course" id="panel-course-code">BUC3219 · Auto-graded</div>
+        </div>
+      </div>
+
+      <div class="state-legend">
+        <div class="legend-dot"><div class="ldot ldot-u"></div>Unattempted</div>
+        <div class="legend-dot"><div class="ldot ldot-p"></div>In Progress</div>
+        <div class="legend-dot"><div class="ldot ldot-c"></div>Completed</div>
+        <div class="legend-dot"><div class="ldot ldot-f"></div>Failed</div>
+      </div>
+
+      <div id="task-list"></div>
+
+      <div class="panel-footer">
+        <div class="total-row">
+          <span class="total-label">Total Score</span>
+          <span>
+            <span class="total-val" id="panel-score">0</span>
+            <span class="total-max" id="panel-score-max"> / 30</span>
+          </span>
+        </div>
+        <div id="grand-bar-bg"><div id="grand-bar-fill"></div></div>
+        <button class="btn-view-page" id="btn-view-page" onclick="showPreview()">🌐 Preview Webpage</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- STATUS BAR -->
+  <div class="status-bar">
+    <div class="sb-item">
+      <div class="sb-dot" id="sb-apache-dot"></div>
+      <span id="sb-apache-label">Apache: Not Installed</span>
+    </div>
+    <div class="sb-item">
+      <div class="sb-dot" id="sb-service-dot"></div>
+      <span id="sb-service-label">Service: Stopped</span>
+    </div>
+    <div class="sb-item">
+      <div class="sb-dot" id="sb-file-dot"></div>
+      <span id="sb-file-label">index.html: None</span>
+    </div>
+    <div class="sb-item" style="margin-left:auto">
+      <div class="sb-dot" id="sb-bridge-dot"></div>
+      <span id="sb-bridge-label">VMware Bridge: Simulated</span>
+    </div>
+  </div>
+
+</div><!-- end screen-sim -->
+
+<!-- BROWSER PREVIEW OVERLAY -->
+<div id="preview-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.8);z-index:200;align-items:center;justify-content:center">
+  <div class="preview-window">
+    <div class="preview-chrome">
+      <span class="pch-dot pch-r"></span>
+      <span class="pch-dot pch-y"></span>
+      <span class="pch-dot pch-g"></span>
+      <div class="preview-url-bar" id="preview-url-bar">http://localhost/</div>
+      <button class="preview-close-btn" onclick="closePreview()">✕ Close</button>
+    </div>
+    <iframe id="preview-frame" style="flex:1;border:none;width:100%"></iframe>
+  </div>
+</div>
+
+<!-- EXAMINER OVERLAY -->
+<div id="examiner-overlay" onclick="handleOverlayClick(event)">
+  <div class="examiner-panel" onclick="event.stopPropagation()">
+    <div class="ex-hdr">
+      <h2>🔧 Examiner Dashboard</h2>
+      <button class="ex-close" onclick="document.getElementById('examiner-overlay').style.display='none'">✕ Close</button>
+    </div>
+    <div class="ex-tabs">
+      <button class="ex-tab active" onclick="switchExTab('overview')">Overview</button>
+      <button class="ex-tab" onclick="switchExTab('override')">Override Marks</button>
+      <button class="ex-tab" onclick="switchExTab('bridge')">VMware Bridge</button>
+      <button class="ex-tab" onclick="switchExTab('agent')">VM Agent</button>
+    </div>
+    <div class="ex-body">
+
+      <!-- OVERVIEW -->
+      <div class="ex-panel active" id="ex-panel-overview">
+        <div class="ex-info-block">
+          <h3>Exam Details</h3>
+          <div class="ex-row"><span class="ex-row-k">Course</span><span class="ex-row-v" id="ex-course-code">—</span></div>
+          <div class="ex-row"><span class="ex-row-k">Date</span><span class="ex-row-v" id="ex-date">—</span></div>
+          <div class="ex-row"><span class="ex-row-k">Duration</span><span class="ex-row-v" id="ex-duration">90 min</span></div>
+          <div class="ex-row"><span class="ex-row-k">Total Marks</span><span class="ex-row-v" id="ex-total-marks">30</span></div>
+          <div class="ex-row"><span class="ex-row-k">Parser Source</span><span class="ex-row-v" id="ex-parser-source">Default</span></div>
+        </div>
+        <div class="ex-info-block">
+          <h3>Student Session</h3>
+          <div class="ex-row"><span class="ex-row-k">Name</span><span class="ex-row-v" id="ex-s-name">—</span></div>
+          <div class="ex-row"><span class="ex-row-k">Reg. Number</span><span class="ex-row-v" id="ex-s-reg">—</span></div>
+          <div class="ex-row"><span class="ex-row-k">Shift</span><span class="ex-row-v" id="ex-s-shift">—</span></div>
+          <div class="ex-row"><span class="ex-row-k">VM / Computer</span><span class="ex-row-v" id="ex-s-vm">—</span></div>
+          <div class="ex-row"><span class="ex-row-k">Current Score</span><span class="ex-row-v" id="ex-curr-score" style="color:var(--green)">0 / 30</span></div>
+        </div>
+        <button class="btn btn-primary" style="margin-top:4px" onclick="exportResults()">⬇ Export Session Results</button>
+      </div>
+
+      <!-- MARK OVERRIDE -->
+      <div class="ex-panel" id="ex-panel-override">
+        <p style="font-size:12px;color:var(--dim);margin-bottom:14px;line-height:1.6">
+          Manually override marks for any task. Use this to award discretionary credit or correct auto-grading errors.
+        </p>
+        <div id="override-list"></div>
+      </div>
+
+      <!-- VMWARE BRIDGE -->
+      <div class="ex-panel" id="ex-panel-bridge">
+        <div class="bridge-section">
+          <h3>Architecture Overview</h3>
+          <div class="bridge-arch">
+<span class="cn">┌──────────────────────────────────────┐</span>
+<span class="cn">│        VMware Workstation VM         │</span>
+<span class="cn">│                                      │</span>
+<span class="gn">│  ┌─────────────────────────────────┐  │</span>
+<span class="gn">│  │   mubs_agent.py (polling loop)  │  │</span>
+<span class="gn">│  │   Checks every 2 seconds:       │  │</span>
+<span class="gn">│  │   • dpkg -l apache2             │  │</span>
+<span class="gn">│  │   • systemctl is-active apache2 │  │</span>
+<span class="gn">│  │   • systemctl is-enabled apache2│  │</span>
+<span class="gn">│  │   • cat /var/www/html/index.html│  │</span>
+<span class="gn">│  │   • curl -s localhost           │  │</span>
+<span class="gn">│  └──────────────┬──────────────────┘  │</span>
+<span class="cn">└─────────────────│────────────────────┘</span>
+                  <span class="am">│ HTTP POST /state</span>
+                  <span class="am">▼</span>
+<span class="bl">┌─────────────────────────────────────┐</span>
+<span class="bl">│   WebSocket Bridge (localhost:8765) │</span>
+<span class="bl">│   OR HTTP Endpoint (:8080/state)    │</span>
+<span class="bl">└──────────────────┬──────────────────┘</span>
+                   <span class="am">│ JSON state stream</span>
+                   <span class="am">▼</span>
+<span class="cn">┌─────────────────────────────────────┐</span>
+<span class="cn">│   This Grader (Browser / Electron)  │</span>
+<span class="cn">│   Receives VM state → awards marks  │</span>
+<span class="cn">└─────────────────────────────────────┘</span></div>
+        </div>
+
+        <div class="bridge-section">
+          <h3>WebSocket Connection</h3>
+          <div class="ws-status">
+            <div class="ws-dot" id="ws-dot"></div>
+            <span class="ws-label" id="ws-label">ws://localhost:8765 — Not connected (simulated mode)</span>
+            <button class="btn-ws" onclick="mockWSConnect()">Connect</button>
+          </div>
+          <p style="font-size:11px;color:var(--dimmer);margin-top:10px;line-height:1.6">
+            In production, run <span style="font-family:var(--font-mono);color:var(--cyan)">mubs_agent.py</span> inside the student's VM. The grader connects to it via WebSocket and switches from "Simulated" to "Live" mode — awarding marks based on actual VM state rather than typed commands.
+          </p>
+        </div>
+
+        <div class="bridge-section">
+          <h3>State Payload Format</h3>
+          <div class="code-block"><span class="comment">// JSON sent by VM agent every 2 seconds</span>
+{
+  <span class="string">"timestamp"</span>: <span class="string">"2026-03-26T08:14:05Z"</span>,
+  <span class="string">"student_id"</span>: <span class="string">"22/U/04567"</span>,
+  <span class="string">"vm_id"</span>: <span class="string">"LAB-PC-07"</span>,
+  <span class="string">"states"</span>: {
+    <span class="string">"apache_installed"</span>: <span class="keyword">true</span>,
+    <span class="string">"apache_running"</span>:   <span class="keyword">true</span>,
+    <span class="string">"apache_enabled"</span>:   <span class="keyword">false</span>,
+    <span class="string">"index_html_exists"</span>: <span class="keyword">true</span>,
+    <span class="string">"index_html_content"</span>: <span class="string">"&lt;html&gt;...&lt;/html&gt;"</span>,
+    <span class="string">"localhost_responds"</span>: <span class="keyword">true</span>,
+    <span class="string">"http_status"</span>: <span class="keyword">200</span>
+  }
+}</div>
+        </div>
+      </div>
+
+      <!-- VM AGENT CODE -->
+      <div class="ex-panel" id="ex-panel-agent">
+        <p style="font-size:12px;color:var(--dim);margin-bottom:14px;line-height:1.6">
+          Deploy this Python script inside the student's Ubuntu VM. It polls the system state every 2 seconds and posts to the grader over HTTP or WebSocket.
+        </p>
+        <div class="code-block"><span class="comment">#!/usr/bin/env python3</span>
+<span class="comment"># mubs_agent.py — MUBS VM State Reporter</span>
+<span class="comment"># Drop into student VM: python3 mubs_agent.py</span>
+
+<span class="keyword">import</span> subprocess, json, time, urllib.request, os
+
+GRADER_URL = <span class="string">"http://HOST_IP:8080/state"</span>
+STUDENT_ID = os.environ.get(<span class="string">"STUDENT_ID"</span>, <span class="string">"unknown"</span>)
+VM_ID      = os.environ.get(<span class="string">"VM_ID"</span>,      <span class="string">"unknown"</span>)
+INTERVAL   = 2  <span class="comment"># seconds between polls</span>
+
+<span class="keyword">def</span> run(cmd):
+    <span class="keyword">try</span>:
+        r = subprocess.run(cmd, shell=<span class="keyword">True</span>,
+            capture_output=<span class="keyword">True</span>, text=<span class="keyword">True</span>, timeout=5)
+        <span class="keyword">return</span> r.stdout.strip(), r.returncode
+    <span class="keyword">except</span>: <span class="keyword">return</span> <span class="string">""</span>, 1
+
+<span class="keyword">def</span> collect_state():
+    installed, _  = run(<span class="string">"dpkg -l apache2 2>/dev/null | grep '^ii'"</span>)
+    running,  rc1 = run(<span class="string">"systemctl is-active apache2"</span>)
+    enabled,  rc2 = run(<span class="string">"systemctl is-enabled apache2"</span>)
+    idx_html, _   = run(<span class="string">"cat /var/www/html/index.html 2>/dev/null"</span>)
+    curl_out, crc = run(<span class="string">"curl -s -o /dev/null -w '%{http_code}' localhost"</span>)
+    <span class="keyword">return</span> {
+        <span class="string">"apache_installed"</span>:   bool(installed),
+        <span class="string">"apache_running"</span>:     running == <span class="string">"active"</span>,
+        <span class="string">"apache_enabled"</span>:     running == <span class="string">"enabled"</span>,
+        <span class="string">"index_html_exists"</span>:  bool(idx_html),
+        <span class="string">"index_html_content"</span>: idx_html[:4000],
+        <span class="string">"localhost_responds"</span>:  curl_out == <span class="string">"200"</span>,
+        <span class="string">"http_status"</span>: int(curl_out) <span class="keyword">if</span> curl_out.isdigit() <span class="keyword">else</span> 0
+    }
+
+<span class="keyword">def</span> post_state(payload):
+    data = json.dumps(payload).encode()
+    req  = urllib.request.Request(GRADER_URL, data=data,
+           headers={<span class="string">"Content-Type"</span>: <span class="string">"application/json"</span>})
+    <span class="keyword">try</span>: urllib.request.urlopen(req, timeout=3)
+    <span class="keyword">except</span>: <span class="keyword">pass</span>  <span class="comment"># silent — don't interrupt student</span>
+
+<span class="keyword">print</span>(<span class="string">f"MUBS Agent running. Reporting to {GRADER_URL}"</span>)
+<span class="keyword">while True</span>:
+    state = {<span class="string">"timestamp"</span>: time.strftime(<span class="string">"%Y-%m-%dT%H:%M:%SZ"</span>),
+             <span class="string">"student_id"</span>: STUDENT_ID,
+             <span class="string">"vm_id"</span>: VM_ID, <span class="string">"states"</span>: collect_state()}
+    post_state(state)
+    time.sleep(INTERVAL)</div>
+        <button class="btn" style="margin-top:12px;background:var(--bg2);border:1px solid var(--border);color:var(--text);font-size:12px;padding:8px" onclick="copyAgent()">📋 Copy Agent Script</button>
+      </div>
+
+    </div><!-- end ex-body -->
+  </div>
+</div>
+
+<!-- TOAST STACK -->
+<div id="toast-stack"></div>
+
+<!-- ═══════════════════════════════════════════════════════════
+     JAVASCRIPT ENGINE
+════════════════════════════════════════════════════════════ -->
+<script>
+'use strict';
+// ══════════════════════════════════════════════════════════════
+//  SECTION 1 — TASK TYPE LIBRARY
+//  Each type defines how to detect completion from VM state
+// ══════════════════════════════════════════════════════════════
+const TASK_TYPES = {
+  install_package: {
+    icon: done => done ? '✅' : '📦',
+    stateKey: 'apache',
+    inProgressCheck: vm => false, // no intermediate for install
+    completedCheck:  vm => vm.apache
+  },
+  start_service: {
+    icon: done => done ? '✅' : '▶️',
+    stateKey: 'running',
+    inProgressCheck: vm => false,
+    completedCheck:  vm => vm.running
+  },
+  enable_service: {
+    icon: done => done ? '✅' : '🔁',
+    stateKey: 'enabled',
+    inProgressCheck: vm => vm.running && !vm.enabled,
+    completedCheck:  vm => vm.enabled
+  },
+  start_and_enable: {
+    icon: done => done ? '✅' : '⚙️',
+    inProgressCheck: vm => (vm.running && !vm.enabled) || (!vm.running && vm.enabled),
+    completedCheck:  vm => vm.running && vm.enabled
+  },
+  create_file: {
+    icon: done => done ? '✅' : '📝',
+    inProgressCheck: vm => !!vm.files['/var/www/html/index.html'] && vm.files['/var/www/html/index.html'].length < 50,
+    completedCheck:  vm => !!vm.files['/var/www/html/index.html'] && vm.files['/var/www/html/index.html'].length >= 50
+  },
+  verify_content: {
+    icon: done => done ? '✅' : '🎓',
+    inProgressCheck: vm => {
+      const c = vm.files['/var/www/html/index.html'] || '';
+      return (hasName(c) && !hasReg(c)) || (!hasName(c) && hasReg(c));
+    },
+    completedCheck: vm => {
+      const c = vm.files['/var/www/html/index.html'] || '';
+      return hasName(c) && hasReg(c);
+    }
+  },
+  access_url: {
+    icon: done => done ? '✅' : '🌐',
+    inProgressCheck: vm => vm.apache && vm.running && !vm.urlAccessed,
+    completedCheck:  vm => vm.urlAccessed
+  },
+  check_status: {
+    icon: done => done ? '✅' : '🔍',
+    inProgressCheck: vm => vm.apache && vm.running && !vm.statusChecked,
+    completedCheck:  vm => vm.statusChecked
+  }
+};
+
+// ══════════════════════════════════════════════════════════════
+//  SECTION 2 — DEFAULT EXAM DEFINITION
+//  Mirrors the uploaded exam paper (BUC3219, 26 March 2026)
+// ══════════════════════════════════════════════════════════════
+const DEFAULT_EXAM = {
+  title: 'Web Server Administration — Coursework 1',
+  courseCode: 'BUC3219',
+  date: '26 March 2026',
+  shift: 'One',
+  durationMinutes: 90,
+  totalMarks: 30,
+  source: 'Default',
+  tasks: [
+    { id:'t1', number:1,  label:'1. Install Apache Web Server',
+      description:'Install the Apache2 web server package using apt',
+      marks:5, type:'install_package', params:{package:'apache2'} },
+
+    { id:'t2', number:2,  label:'2. Start &amp; Enable Apache Service',
+      description:'Start the Apache2 service AND enable it to auto-start on boot',
+      marks:3, type:'start_and_enable', params:{service:'apache2'},
+      subTasks: [
+        { id:'t2a', label:'Start service (systemctl start)', marks:1.5 },
+        { id:'t2b', label:'Enable on boot (systemctl enable)', marks:1.5 }
+      ]
+    },
+
+    { id:'t3', number:3,  label:'3. Create Homepage',
+      description:'Create /var/www/html/index.html with valid HTML content',
+      marks:10, type:'create_file', params:{path:'/var/www/html/index.html'} },
+
+    { id:'t4', number:4,  label:'4. Name &amp; Reg Number on Page',
+      description:'Display your full name and registration number on the webpage',
+      marks:4, type:'verify_content', params:{} },
+
+    { id:'t5', number:5,  label:'5. Access via localhost / IP',
+      description:'Access the webpage using curl, wget, or the browser preview',
+      marks:5, type:'access_url', params:{} },
+
+    { id:'t6', number:6,  label:'6. Confirm Server is Running',
+      description:'Use systemctl status apache2 to confirm the server is active',
+      marks:3, type:'check_status', params:{} }
+  ]
+};
+
+// ══════════════════════════════════════════════════════════════
+//  SECTION 3 — GLOBAL STATE
+// ══════════════════════════════════════════════════════════════
+let EXAM = JSON.parse(JSON.stringify(DEFAULT_EXAM)); // active exam config
+
+let student = { name:'', regNo:'', shift:'1', vmId:'' };
+
+let vm = {
+  apache: false, running: false, enabled: false,
+  files: {}, ufw80: false, urlAccessed: false, statusChecked: false
+};
+
+// taskStates[id] = 'unattempted' | 'inprogress' | 'completed' | 'failed'
+let taskStates = {};
+let marks = {};     // marks[taskId] = points earned
+let notified = new Set();
+
+// History
+let hist = [], histIdx = -1;
+
+// Cat mode (cat > file)
+let catMode = false, catBuf = [], catPath = '';
+
+// Nano
+let nanoFilePath = '';
+
+// Timer
+let timerRemaining = 90 * 60;
+let timerInterval  = null;
+
+// ══════════════════════════════════════════════════════════════
+//  SECTION 4 — SETUP SCREEN LOGIC
+// ══════════════════════════════════════════════════════════════
+function switchSetupTab(tab) {
+  document.querySelectorAll('.setup-tab').forEach((b,i) => {
+    b.classList.toggle('active', (i===0 && tab==='examiner') || (i===1 && tab==='student'));
+  });
+  document.getElementById('tab-examiner').classList.toggle('active', tab==='examiner');
+  document.getElementById('tab-student').classList.toggle('active', tab==='student');
+}
+
+function useDefaultExam() {
+  EXAM = JSON.parse(JSON.stringify(DEFAULT_EXAM));
+  document.getElementById('ex-parser-source').textContent = 'Default (BUC3219)';
+  toast('Default Exam Loaded', 'BUC3219 Apache exam · 6 tasks · 30 marks — review below', 0, 'info');
+  openReviewEditor();
+}
+
+// ══════════════════════════════════════════════════════════════
+//  INTERNET DETECTION — uses Image ping (works from file://)
+// ══════════════════════════════════════════════════════════════
+let isOnline = false;
+
+function pingOnline() {
+  // Image-based ping: works from any origin including file://
+  // fetch with mode:no-cors does NOT work reliably from file://
+  return new Promise(resolve => {
+    const img   = new Image();
+    const timer = setTimeout(() => { img.src = ''; resolve(false); }, 5000);
+    img.onload  = () => { clearTimeout(timer); resolve(true);  };
+    img.onerror = () => { clearTimeout(timer); resolve(false); };
+    // openrouter favicon — lightweight, always available when site is up
+    img.src = 'https://openrouter.ai/favicon.ico?_=' + Date.now();
+  });
+}
+
+async function checkInternet() {
+  const badge = document.getElementById('inet-badge');
+  const label = document.getElementById('inet-label');
+  badge.className = 'inet-badge checking';
+  label.textContent = 'Checking connection…';
+
+  isOnline = await pingOnline();
+
+  badge.className   = 'inet-badge ' + (isOnline ? 'online' : 'offline');
+  label.textContent = isOnline
+    ? 'Online — AI parsing available'
+    : 'Offline — use Manual Setup or Default Exam';
+  updateAIKeyUI();
+  return isOnline;
+}
+
+// Re-check every 30 s silently
+setInterval(async () => {
+  const prev = isOnline;
+  isOnline = await pingOnline();
+  if (isOnline !== prev) checkInternet(); // only refresh badge on state change
+}, 30000);
+
+// ══════════════════════════════════════════════════════════════
+//  OPENROUTER KEY MANAGEMENT
+// ══════════════════════════════════════════════════════════════
+let _orKey = '';
+
+function loadORKey() {
+  try { _orKey = localStorage.getItem('mubs_or_key') || ''; } catch(_) {}
+  updateAIKeyUI();
+}
+
+function saveORKey() {
+  const val = document.getElementById('or-key').value.trim();
+  if (!val) { toast('No Key', 'Paste your OpenRouter API key first.', 0, 'error'); return; }
+  _orKey = val;
+  try { localStorage.setItem('mubs_or_key', val); } catch(_) {}
+  document.getElementById('or-key').value = '';
+  updateAIKeyUI();
+  toast('Key Saved', 'OpenRouter key stored in browser — AI parsing enabled.', 0, 'success');
+}
+
+function updateAIKeyUI() {
+  const st = document.getElementById('ai-key-status');
+  const genBtn = document.getElementById('btn-gen-solutions');
+  if (_orKey) {
+    const masked = _orKey.substring(0,8) + '…' + _orKey.slice(-4);
+    st.textContent = `✓ Key saved: ${masked}`;
+    st.className = 'ai-key-status saved';
+  } else {
+    st.textContent = isOnline
+      ? 'No key saved — paste your OpenRouter key above to enable AI'
+      : 'Offline — AI features require internet';
+    st.className = 'ai-key-status empty';
+  }
+  if (genBtn) genBtn.disabled = !(_orKey && isOnline);
+}
+
+// ══════════════════════════════════════════════════════════════
+//  PDF.js WORKER SETUP
+//  Loads worker as blob URL so it works from file:// without warning
+// ══════════════════════════════════════════════════════════════
+let _pdfWorkerReady = false;
+
+async function initPDFWorker() {
+  if (_pdfWorkerReady) return;
+  if (typeof pdfjsLib === 'undefined') return;
+  try {
+    // Fetch the worker script and create a local blob URL —
+    // this is the only method that suppresses the "fake worker" warning
+    // when running from file:// (CDN URL alone doesn't satisfy the worker origin check)
+    const resp = await fetch(
+      'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'
+    );
+    const blob = await resp.blob();
+    pdfjsLib.GlobalWorkerOptions.workerSrc = URL.createObjectURL(blob);
+    _pdfWorkerReady = true;
+  } catch(_) {
+    // Offline or CDN unavailable — fake worker still works, just slower
+    pdfjsLib.GlobalWorkerOptions.workerSrc = '';
+  }
+}
+
+// ══════════════════════════════════════════════════════════════
+//  PDF TEXT EXTRACTION
+// ══════════════════════════════════════════════════════════════
+async function extractPDFText(file) {
+  if (typeof pdfjsLib === 'undefined')
+    throw new Error('PDF.js not loaded — requires internet to load from CDN on first use');
+  await initPDFWorker();
+  const ab      = await file.arrayBuffer();
+  const pdf     = await pdfjsLib.getDocument({ data: ab }).promise;
+  let text = '';
+  for (let p = 1; p <= pdf.numPages; p++) {
+    const page    = await pdf.getPage(p);
+    const content = await page.getTextContent();
+    text += content.items.map(i => i.str).join(' ') + '\n';
+  }
+  return text.trim();
+}
+
+// ══════════════════════════════════════════════════════════════
+//  PDF UPLOAD HANDLER
+// ══════════════════════════════════════════════════════════════
+let _lastPDFText = '';
+
+async function handlePDFUpload(input) {
+  const file = input.files[0];
+  if (!file) return;
+  document.getElementById('upload-filename').textContent = '📎 ' + file.name;
+
+  const status = document.getElementById('parse-status');
+  status.className = 'parse-status loading';
+  status.textContent = '⟳ Extracting text from PDF…';
+
+  try {
+    _lastPDFText = await extractPDFText(file);
+    if (!_lastPDFText || _lastPDFText.length < 50)
+      throw new Error('PDF appears to be scanned/image-only — use Manual Setup instead');
+
+    status.textContent = '⟳ Checking connection & preparing AI…';
+
+    // ── Key: also grab from input field if user pasted but hasn't clicked Save yet ──
+    const inputFieldKey = document.getElementById('or-key').value.trim();
+    if (inputFieldKey && !_orKey) {
+      _orKey = inputFieldKey;
+      try { localStorage.setItem('mubs_or_key', _orKey); } catch(_) {}
+      updateAIKeyUI();
+    }
+
+    // ── Re-check connectivity right now (don't rely on cached isOnline from page load) ──
+    const currentlyOnline = await pingOnline();
+    if (currentlyOnline !== isOnline) {
+      isOnline = currentlyOnline;
+      updateAIKeyUI();
+    }
+
+    status.textContent = '⟳ Parsing exam structure with AI…';
+
+    let parsed = null;
+    let usedAI = false;
+
+    if (_orKey && isOnline) {
+      parsed = await parseExamWithOpenRouter(_lastPDFText);
+      usedAI = true;
+    } else {
+      parsed = localParseExamText(_lastPDFText);
+      const reason = !isOnline ? 'no internet' : 'no API key saved';
+      toast('Local Parse Used', `AI skipped (${reason}). Review tasks below and correct if needed.`, 0, 'warn');
+    }
+
+    EXAM = { ...DEFAULT_EXAM, ...parsed, source: 'Parsed: ' + file.name };
+    status.className = 'parse-status success';
+    status.textContent = `✓ ${usedAI ? 'AI parsed' : 'Locally parsed'}: "${EXAM.title}" · ${EXAM.tasks.length} tasks · ${EXAM.totalMarks} marks`;
+    document.getElementById('ex-parser-source').textContent = (usedAI ? 'AI' : 'Local') + ' · ' + file.name;
+    toast('Exam Loaded!', `${EXAM.tasks.length} tasks — review & edit below`, 0, 'success');
+    openReviewEditor();
+
+  } catch(err) {
+    let msg = err.message;
+    if (msg.includes('401')) msg = 'Invalid OpenRouter key — go to openrouter.ai and generate a new key.';
+    else if (msg.includes('429')) msg = 'Rate limit hit — wait 30 seconds and re-upload.';
+    else if (msg.includes('402')) msg = 'OpenRouter account needs credits — the free model may be out of capacity, try again later.';
+    status.className = 'parse-status error';
+    status.textContent = `✕ ${msg}`;
+    toast('Falling back to local parse', msg, 0, 'warn');
+    // Don't leave examiner stuck — run local parse and open review
+    try {
+      const parsed = localParseExamText(_lastPDFText);
+      EXAM = { ...DEFAULT_EXAM, ...parsed, source: 'Local: ' + file.name };
+    } catch(_) {
+      EXAM = JSON.parse(JSON.stringify(DEFAULT_EXAM));
+    }
+    setTimeout(() => openReviewEditor(), 700);
+  }
+}
+
+// ══════════════════════════════════════════════════════════════
+//  OPENROUTER PARSE  (no rate-limit retry needed — PDF.js handles reading)
+// ══════════════════════════════════════════════════════════════
+async function parseExamWithOpenRouter(pdfText) {
+  const body = {
+    model: 'google/gemma-2-9b-it:free',
+    max_tokens: 1200,
+    messages: [{
+      role: 'user',
+      content: `You are an exam parser. Extract the exam structure from the text below and return ONLY a valid JSON object, no markdown, no explanation:
+{
+  "title": "course name",
+  "courseCode": "CODE",
+  "date": "date string",
+  "shift": "One",
+  "durationMinutes": 90,
+  "totalMarks": 30,
+  "tasks": [
+    {"id":"t1","number":1,"label":"1. Short label","description":"full task description","marks":5,"type":"install_package","params":{}}
+  ]
+}
+Types: install_package | start_service | enable_service | start_and_enable | create_file | verify_content | access_url | check_status | custom
+PDF TEXT:
+${pdfText.substring(0, 6000)}`
+    }]
+  };
+
+  const resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${_orKey}`,
+      'HTTP-Referer': 'https://mubs.ac.ug',
+      'X-Title': 'MUBS Exam Grader'
+    },
+    body: JSON.stringify(body)
+  });
+
+  if (!resp.ok) {
+    const err = new Error(`API ${resp.status}`);
+    throw err;
+  }
+  const data  = await resp.json();
+  const raw   = data.choices?.[0]?.message?.content || '';
+  const clean = raw.replace(/```json|```/g, '').trim();
+  const start = clean.indexOf('{');
+  const end   = clean.lastIndexOf('}');
+  if (start === -1 || end === -1) throw new Error('AI returned invalid JSON');
+  return JSON.parse(clean.substring(start, end + 1));
+}
+
+// ══════════════════════════════════════════════════════════════
+//  LOCAL FALLBACK PARSER (offline / no key)
+// ══════════════════════════════════════════════════════════════
+function localParseExamText(text) {
+  // Extract course code
+  const codeM   = text.match(/\b([A-Z]{2,5}\d{3,5})\b/);
+  // Extract date
+  const dateM   = text.match(/\b(\d{1,2}\s+\w+\s+20\d\d|\w+\s+\d{1,2},?\s+20\d\d)\b/i);
+  // Extract duration
+  const durM    = text.match(/(\d+)\s*(min|hour|hr)/i);
+  const durMins = durM ? (durM[2].toLowerCase().startsWith('h') ? parseInt(durM[1])*60 : parseInt(durM[1])) : 90;
+  // Extract total marks
+  const totM    = text.match(/total[:\s]+(\d+)\s*marks?/i) || text.match(/(\d+)\s*marks?\s*total/i);
+  // Extract tasks — look for numbered items with marks in brackets or after
+  const taskPat = /(\d+)[.)]\s+(.{10,120?})[\s\S]*?(\d+\.?\d*)\s*marks?/gi;
+  const tasks   = [];
+  let tm; let idx = 0;
+  while ((tm = taskPat.exec(text)) !== null && idx < 10) {
+    idx++;
+    const label = tm[2].replace(/\s+/g,' ').trim().substring(0,80);
+    const marks = parseFloat(tm[3]) || 5;
+    const lc    = label.toLowerCase();
+    let type = 'custom';
+    if (lc.includes('install'))              type = 'install_package';
+    else if (lc.includes('start') && lc.includes('enable')) type = 'start_and_enable';
+    else if (lc.includes('start'))           type = 'start_service';
+    else if (lc.includes('enable'))          type = 'enable_service';
+    else if (lc.includes('creat') || lc.includes('write') || lc.includes('file')) type = 'create_file';
+    else if (lc.includes('name') || lc.includes('reg'))    type = 'verify_content';
+    else if (lc.includes('curl') || lc.includes('access') || lc.includes('browse')) type = 'access_url';
+    else if (lc.includes('status') || lc.includes('confirm')) type = 'check_status';
+    tasks.push({ id:`t${idx}`, number:idx, label:`${idx}. ${label}`, description:label, marks, type, params:{} });
+  }
+  if (tasks.length === 0) return JSON.parse(JSON.stringify(DEFAULT_EXAM));
+  const totalMarks = tasks.reduce((a,t) => a + t.marks, 0);
+  return {
+    title:           codeM ? `${codeM[1]} Exam` : 'Parsed Exam',
+    courseCode:      codeM ? codeM[1] : 'EXAM',
+    date:            dateM ? dateM[1] : new Date().toDateString(),
+    shift:           'One',
+    durationMinutes: durMins,
+    totalMarks,
+    tasks
+  };
+}
+
+// ══════════════════════════════════════════════════════════════
+//  SOLUTION GENERATION
+// ══════════════════════════════════════════════════════════════
+let _examSolutions = {}; // taskId -> solution text
+
+async function generateSolutions() {
+  if (!_orKey) { toast('No API Key', 'Save your OpenRouter key first.', 0, 'error'); return; }
+  if (!isOnline) { toast('Offline', 'Internet required to generate solutions.', 0, 'error'); return; }
+
+  const btn    = document.getElementById('btn-gen-solutions');
+  const st     = document.getElementById('ai-gen-status');
+  btn.disabled = true;
+  btn.textContent = '⟳ Generating…';
+  st.className = 'ai-gen-status loading';
+  st.textContent = '⟳ Asking AI to generate expected answers…';
+
+  // Build task list from current review editor
+  const taskRows = document.querySelectorAll('#review-task-list .task-editor-row');
+  const taskList = [];
+  taskRows.forEach((row, i) => {
+    const inputs = row.querySelectorAll('input, select');
+    taskList.push({
+      n: i+1,
+      label: (inputs[0]?.value||'').trim() || `Task ${i+1}`,
+      marks: inputs[1]?.value || '?',
+      type:  inputs[2]?.value || 'custom',
+      desc:  (inputs[3]?.value||'').trim()
+    });
+  });
+
+  const context = _lastPDFText
+    ? `\nExam PDF context:\n${_lastPDFText.substring(0,3000)}`
+    : '';
+
+  const prompt = `You are a Linux/Web Server Administration lecturer at Makerere University Business School (MUBS).
+For each task below, write the exact expected answer/solution a student must perform in the Ubuntu terminal to earn full marks.
+Be specific: include exact commands, file paths, and any required content.
+Return ONLY a JSON object like:
+{"t1":"step-by-step solution","t2":"solution",...}
+${context}
+Tasks:
+${taskList.map(t => `t${t.n}: [${t.marks} marks] ${t.label} — ${t.desc||t.type}`).join('\n')}`;
+
+  try {
+    const resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${_orKey}`,
+        'HTTP-Referer': 'https://mubs.ac.ug',
+        'X-Title': 'MUBS Exam Grader'
+      },
+      body: JSON.stringify({
+        model: 'google/gemma-2-9b-it:free',
+        max_tokens: 1500,
+        messages: [{ role: 'user', content: prompt }]
+      })
+    });
+
+    if (!resp.ok) throw new Error(`API ${resp.status}`);
+    const data  = await resp.json();
+    const raw   = data.choices?.[0]?.message?.content || '';
+    const clean = raw.replace(/```json|```/g,'').trim();
+    const start = clean.indexOf('{');
+    const end   = clean.lastIndexOf('}');
+    if (start !== -1 && end !== -1) {
+      const parsed = JSON.parse(clean.substring(start, end+1));
+      taskList.forEach(t => {
+        const key = `t${t.n}`;
+        _examSolutions[key] = parsed[key] || parsed[`Task ${t.n}`] || `# No solution generated for task ${t.n}`;
+      });
+    } else {
+      throw new Error('AI returned invalid JSON for solutions');
+    }
+
+    renderSolutionsEditor(taskList);
+    st.className = 'ai-gen-status done';
+    st.textContent = `✓ Solutions generated for ${taskList.length} tasks — review and edit below`;
+    toast('Solutions Ready', 'Review and fine-tune the expected answers below.', 0, 'success');
+
+  } catch(err) {
+    st.className = 'ai-gen-status error';
+    st.textContent = `✕ ${err.message} — add solutions manually below`;
+    // Still render editable blanks
+    taskList.forEach(t => { _examSolutions[`t${t.n}`] = _examSolutions[`t${t.n}`] || ''; });
+    renderSolutionsEditor(taskList);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '✨ Regenerate Expected Answers';
+  }
+}
+
+function renderSolutionsEditor(taskList) {
+  const list = document.getElementById('solutions-list');
+  list.innerHTML = '';
+  taskList.forEach(t => {
+    const key = `t${t.n}`;
+    const div = document.createElement('div');
+    div.className = 'solution-item';
+    div.id = `sol-${key}`;
+
+    // Build button and textarea safely via DOM — avoids all quote-escaping issues in innerHTML
+    const labelDiv = document.createElement('div');
+    labelDiv.className = 'solution-item-label';
+
+    const span = document.createElement('span');
+    span.innerHTML = `Task ${t.n}: ${t.label} <span style="color:var(--amber);font-weight:400">[${t.marks} marks]</span>`;
+
+    const regenBtn = document.createElement('button');
+    regenBtn.className = 'solution-regen';
+    regenBtn.textContent = '↻ Regen';
+    regenBtn.dataset.key   = key;
+    regenBtn.dataset.label = t.label;
+    regenBtn.dataset.desc  = t.desc || '';
+    regenBtn.addEventListener('click', function() {
+      regenOneSolution(this.dataset.key, this.dataset.label, this.dataset.desc);
+    });
+
+    labelDiv.appendChild(span);
+    labelDiv.appendChild(regenBtn);
+
+    const ta = document.createElement('textarea');
+    ta.className   = 'solution-ta';
+    ta.id          = `solta-${key}`;
+    ta.rows        = 3;
+    ta.placeholder = 'Expected answer / solution commands…';
+    ta.value       = _examSolutions[key] || '';
+    ta.addEventListener('input', function() { _examSolutions[key] = this.value; });
+
+    div.appendChild(labelDiv);
+    div.appendChild(ta);
+    list.appendChild(div);
+  });
+}
+
+async function regenOneSolution(key, label, desc) {
+  if (!_orKey || !isOnline) { toast('Cannot regenerate', 'Requires internet + API key.', 0, 'error'); return; }
+  const ta  = document.getElementById(`solta-${key}`);
+  const btn = ta?.closest('.solution-item')?.querySelector('.solution-regen');
+  if (ta)  ta.disabled = true;
+  if (btn) { btn.disabled = true; btn.textContent = '⟳'; }
+
+  try {
+    const resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method:'POST',
+      headers:{
+        'Content-Type':'application/json',
+        'Authorization':`Bearer ${_orKey}`,
+        'HTTP-Referer':'https://mubs.ac.ug',
+        'X-Title':'MUBS Exam Grader'
+      },
+      body: JSON.stringify({
+        model:'google/gemma-2-9b-it:free', max_tokens:400,
+        messages:[{ role:'user',
+          content:`For a MUBS Ubuntu lab exam, write ONLY the exact expected solution/commands for this task (no explanation, just commands and brief notes):
+Task: ${label}
+Description: ${desc || label}
+${_lastPDFText ? 'Context: '+_lastPDFText.substring(0,1000) : ''}` }]
+      })
+    });
+    if (!resp.ok) throw new Error(`API ${resp.status}`);
+    const data = await resp.json();
+    const sol  = data.choices?.[0]?.message?.content?.trim() || '';
+    _examSolutions[key] = sol;
+    if (ta) ta.value = sol;
+    toast('Regenerated', `Solution for ${label} updated.`, 0, 'success');
+  } catch(err) {
+    toast('Regen Failed', err.message, 0, 'error');
+  } finally {
+    if (ta)  ta.disabled = false;
+    if (btn) { btn.disabled = false; btn.textContent = '↻ Regen'; }
+  }
+}
+
+function readFileAsBase64(file) {
+  return new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload = () => res(r.result.split(',')[1]);
+    r.onerror = () => rej(new Error('File read failed'));
+    r.readAsDataURL(file);
+  });
+}
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+function renderParsedTasksPreview(tasks) {
+  openReviewEditor();
+}
+
+// ══════════════════════════════════════════════════════════════
+//  MANUAL SETUP
+// ══════════════════════════════════════════════════════════════
+let manualTaskCount = 0;
+
+function toggleManualSetup() {
+  const toggle = document.getElementById('manual-toggle');
+  const body   = document.getElementById('manual-body');
+  const isOpen = body.classList.contains('open');
+  body.classList.toggle('open', !isOpen);
+  toggle.classList.toggle('open', !isOpen);
+  if (!isOpen && document.getElementById('manual-task-list').children.length === 0) {
+    addManualTask(); // seed with one blank task
+  }
+}
+
+function addManualTask(label='', desc='', marks='', type='install_package') {
+  const list = document.getElementById('manual-task-list');
+  const n = ++manualTaskCount;
+  const id = 'mt-' + Date.now();
+  const row = document.createElement('div');
+  row.className = 'task-editor-row';
+  row.id = id;
+  row.innerHTML = buildTaskRowHTML(id, n, label, desc, marks, type);
+  list.appendChild(row);
+  renumberManualRows();
+}
+
+function removeManualTask(id) {
+  const el = document.getElementById(id);
+  if (el) el.remove();
+  renumberManualRows();
+}
+
+function renumberManualRows() {
+  document.querySelectorAll('#manual-task-list .task-editor-row').forEach((row, i) => {
+    const numEl = row.querySelector('.task-editor-num');
+    if (numEl) numEl.textContent = i + 1;
+  });
+}
+
+function buildTaskRowHTML(id, n, label, desc, marks, type) {
+  const types = ['install_package','start_service','enable_service','start_and_enable',
+                 'create_file','verify_content','access_url','check_status','custom'];
+  const opts = types.map(t => `<option value="${t}" ${t===type?'selected':''}>${t}</option>`).join('');
+  return `
+    <div class="task-editor-row-top">
+      <span class="task-editor-num">${n}</span>
+      <div class="task-editor-inputs">
+        <input class="form-input task-editor-label-input" type="text" placeholder="Task label" value="${label}">
+        <input class="form-input task-editor-marks-input" type="number" placeholder="Marks" min="0.5" step="0.5" value="${marks}">
+        <select class="form-input task-editor-type-input">${opts}</select>
+      </div>
+      <button class="btn-task-del" title="Remove task" onclick="removeManualTask('${id}')">✕</button>
+    </div>
+    <input class="form-input task-editor-desc" type="text" placeholder="Task description (shown to student)…" value="${desc}">`;
+}
+
+function applyManualExam() {
+  const title    = document.getElementById('m-title').value.trim() || 'Manual Exam';
+  const code     = document.getElementById('m-code').value.trim()  || 'EXAM';
+  const date     = document.getElementById('m-date').value.trim()  || new Date().toDateString();
+  const duration = parseInt(document.getElementById('m-duration').value) || 90;
+
+  const taskRows = document.querySelectorAll('#manual-task-list .task-editor-row');
+  if (taskRows.length === 0) { toast('No Tasks', 'Add at least one task before applying.', 0, 'error'); return; }
+
+  const tasks = [];
+  let totalMarks = 0;
+  let valid = true;
+  taskRows.forEach((row, i) => {
+    const inputs = row.querySelectorAll('input, select');
+    const label  = (inputs[0].value || '').trim();
+    const marks  = parseFloat(inputs[1].value) || 0;
+    const type   = inputs[2].value;
+    const desc   = (inputs[3].value || '').trim();
+    if (!label) { toast('Missing Label', `Task ${i+1} needs a label.`, 0, 'error'); valid = false; return; }
+    if (!marks)  { toast('Missing Marks', `Task ${i+1} needs a mark value.`, 0, 'error'); valid = false; return; }
+    totalMarks += marks;
+    tasks.push({ id:`t${i+1}`, number:i+1, label:`${i+1}. ${label}`, description: desc || label, marks, type, params:{} });
+  });
+  if (!valid) return;
+
+  EXAM = { title, courseCode: code, date, shift: 'One', durationMinutes: duration, totalMarks, tasks, source: 'Manual' };
+  // Close manual panel, open review
+  toggleManualSetup();
+  openReviewEditor();
+  toast('Manual Exam Applied', `${tasks.length} tasks · ${totalMarks} marks — review below`, 0, 'success');
+}
+
+// ══════════════════════════════════════════════════════════════
+//  REVIEW / EDIT PANEL
+// ══════════════════════════════════════════════════════════════
+let reviewTaskCount = 0;
+
+function openReviewEditor() {
+  const ed = document.getElementById('review-editor');
+  ed.style.display = 'block';
+  // Populate meta
+  document.getElementById('r-title').value    = EXAM.title       || '';
+  document.getElementById('r-code').value     = EXAM.courseCode  || '';
+  document.getElementById('r-date').value     = EXAM.date        || '';
+  document.getElementById('r-duration').value = EXAM.durationMinutes || 90;
+  // Populate tasks
+  const list = document.getElementById('review-task-list');
+  list.innerHTML = '';
+  reviewTaskCount = 0;
+  (EXAM.tasks || []).forEach(t => addReviewTask(
+    t.label.replace(/^\d+\.\s*/,''),
+    t.description,
+    t.marks,
+    t.type
+  ));
+  recalcReviewTotal();
+  // Show solutions section, update generate button state
+  document.getElementById('solutions-section').style.display = 'block';
+  updateAIKeyUI();
+  // Reset solutions status
+  const st = document.getElementById('ai-gen-status');
+  if (st) { st.className = 'ai-gen-status'; st.textContent = ''; }
+  // Scroll into view
+  setTimeout(() => ed.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100);
+}
+
+function closeReviewEditor() {
+  document.getElementById('review-editor').style.display = 'none';
+}
+
+function addReviewTask(label='', desc='', marks='', type='install_package') {
+  const list = document.getElementById('review-task-list');
+  const id = 'rt-' + (++reviewTaskCount) + '-' + Date.now();
+  const n  = list.children.length + 1;
+  const row = document.createElement('div');
+  row.className = 'task-editor-row';
+  row.id = id;
+  row.innerHTML = buildTaskRowHTML(id, n, label, desc, marks, type, true);
+  list.appendChild(row);
+  // live total recalculation
+  row.querySelectorAll('input').forEach(inp => inp.addEventListener('input', recalcReviewTotal));
+  recalcReviewTotal();
+}
+
+function removeReviewTask(id) {
+  const el = document.getElementById(id);
+  if (el) el.remove();
+  // renumber
+  document.querySelectorAll('#review-task-list .task-editor-row').forEach((row, i) => {
+    const numEl = row.querySelector('.task-editor-num');
+    if (numEl) numEl.textContent = i + 1;
+  });
+  recalcReviewTotal();
+}
+
+function recalcReviewTotal() {
+  let total = 0;
+  document.querySelectorAll('#review-task-list .task-editor-marks-input').forEach(inp => {
+    total += parseFloat(inp.value) || 0;
+  });
+  const el = document.getElementById('review-total-display');
+  if (el) el.textContent = total + ' marks';
+}
+
+// Override buildTaskRowHTML to support both manual and review panels
+function buildTaskRowHTML(id, n, label, desc, marks, type, isReview) {
+  const removeFunc = isReview ? `removeReviewTask('${id}')` : `removeManualTask('${id}')`;
+  const types = ['install_package','start_service','enable_service','start_and_enable',
+                 'create_file','verify_content','access_url','check_status','custom'];
+  const opts = types.map(t => `<option value="${t}" ${t===type?'selected':''}>${t}</option>`).join('');
+  return `
+    <div class="task-editor-row-top">
+      <span class="task-editor-num">${n}</span>
+      <div class="task-editor-inputs">
+        <input class="form-input task-editor-label-input" type="text" placeholder="Task label" value="${(label||'').replace(/"/g,'&quot;')}">
+        <input class="form-input task-editor-marks-input" type="number" placeholder="Marks" min="0.5" step="0.5" value="${marks||''}">
+        <select class="form-input task-editor-type-input">${opts}</select>
+      </div>
+      <button class="btn-task-del" title="Remove task" onclick="${removeFunc}">✕</button>
+    </div>
+    <input class="form-input task-editor-desc" type="text" placeholder="Task description (shown to student)…" value="${(desc||'').replace(/"/g,'&quot;')}">`;
+}
+
+function proceedWithReviewedExam() {
+  const title    = document.getElementById('r-title').value.trim()    || 'Exam';
+  const code     = document.getElementById('r-code').value.trim()     || 'EXAM';
+  const date     = document.getElementById('r-date').value.trim()     || '';
+  const duration = parseInt(document.getElementById('r-duration').value) || 90;
+
+  const taskRows = document.querySelectorAll('#review-task-list .task-editor-row');
+  if (taskRows.length === 0) { toast('No Tasks', 'Add at least one task.', 0, 'error'); return; }
+
+  const tasks = [];
+  let totalMarks = 0;
+  let valid = true;
+  taskRows.forEach((row, i) => {
+    const inputs = row.querySelectorAll('input, select');
+    const label  = (inputs[0].value || '').trim();
+    const marks  = parseFloat(inputs[1].value) || 0;
+    const type   = inputs[2].value;
+    const desc   = (inputs[3].value || '').trim();
+    if (!label) { toast('Missing Label', `Task ${i+1} needs a label.`, 0, 'error'); valid = false; return; }
+    if (!marks)  { toast('Missing Marks', `Task ${i+1} needs a mark value.`, 0, 'error'); valid = false; return; }
+    totalMarks += marks;
+    const taskId = `t${i+1}`;
+    tasks.push({
+      id: taskId, number: i+1, label: `${i+1}. ${label}`,
+      description: desc || label, marks, type, params: {},
+      solution: _examSolutions[taskId] || ''
+    });
+  });
+  if (!valid) return;
+
+  EXAM = { ...EXAM, title, courseCode: code, date, durationMinutes: duration, totalMarks, tasks };
+  document.getElementById('review-editor').style.display = 'none';
+  toast('Exam Confirmed!', `${tasks.length} tasks · ${totalMarks} marks`, 0, 'success');
+  setTimeout(() => switchSetupTab('student'), 600);
+}
+
+function startStudentSession() {
+  const name  = document.getElementById('s-name').value.trim();
+  const reg   = document.getElementById('s-reg').value.trim();
+  const shift = document.getElementById('s-shift').value;
+  const vmId  = document.getElementById('s-vm').value.trim();
+
+  const warn = document.getElementById('student-login-warning');
+  if (!name || !reg) {
+    warn.style.display = 'block';
+    warn.textContent = '⚠ Please enter your full name and registration number.';
+    return;
+  }
+  warn.style.display = 'none';
+
+  student = { name, regNo: reg, shift, vmId };
+  launchSimulator();
+}
+
+// ══════════════════════════════════════════════════════════════
+//  SECTION 5 — SIMULATOR LAUNCH
+// ══════════════════════════════════════════════════════════════
+function launchSimulator() {
+  // Populate exam info
+  document.getElementById('hdr-course-title').textContent = EXAM.title.split('—')[0].trim() || 'Web Server Administration';
+  document.getElementById('hdr-course-sub').textContent   = `${EXAM.courseCode} · MUBS · Shift ${EXAM.shift}`;
+  document.getElementById('hdr-student-tag').textContent  = `${student.name} | ${student.regNo}`;
+  document.getElementById('hdr-score-max').textContent    = `/ ${EXAM.totalMarks}`;
+  document.getElementById('panel-score-max').textContent  = ` / ${EXAM.totalMarks}`;
+  document.getElementById('panel-course-code').textContent = `${EXAM.courseCode} · Auto-graded`;
+  document.getElementById('term-bar-label').textContent   = `${student.name.split(' ')[0].toLowerCase()}@mubs-vm: ~`;
+  document.getElementById('prompt-str').textContent       = `${student.name.split(' ')[0].toLowerCase()}@mubs-vm:~$ `;
+
+  // Examiner panel info
+  document.getElementById('ex-course-code').textContent = EXAM.courseCode;
+  document.getElementById('ex-date').textContent        = EXAM.date;
+  document.getElementById('ex-duration').textContent    = EXAM.durationMinutes + ' min';
+  document.getElementById('ex-total-marks').textContent = EXAM.totalMarks;
+  document.getElementById('ex-parser-source').textContent = EXAM.source || 'Default';
+  document.getElementById('ex-s-name').textContent  = student.name;
+  document.getElementById('ex-s-reg').textContent   = student.regNo;
+  document.getElementById('ex-s-shift').textContent = 'Shift ' + student.shift;
+  document.getElementById('ex-s-vm').textContent    = student.vmId || '—';
+
+  // Init state
+  taskStates = {};
+  marks = {};
+  notified.clear();
+  EXAM.tasks.forEach(t => { taskStates[t.id] = 'unattempted'; marks[t.id] = 0; });
+
+  // Render
+  renderTaskPanel();
+  updateScore();
+  renderOverrideList();
+  updateStatusBar();
+
+  // Switch screens
+  document.getElementById('screen-setup').style.display = 'none';
+  const sim = document.getElementById('screen-sim');
+  sim.style.display = 'flex';
+
+  // Start timer
+  timerRemaining = EXAM.durationMinutes * 60;
+  startTimer();
+
+  // Print welcome banner
+  printBanner();
+
+  // Focus terminal
+  setTimeout(() => document.getElementById('cmd-input').focus(), 100);
+}
+
+// ══════════════════════════════════════════════════════════════
+//  SECTION 6 — TIMER
+// ══════════════════════════════════════════════════════════════
+function startTimer() {
+  if (timerInterval) clearInterval(timerInterval);
+  timerInterval = setInterval(tickTimer, 1000);
+  renderTimer();
+}
+
+function tickTimer() {
+  if (timerRemaining <= 0) {
+    clearInterval(timerInterval);
+    toast('⏰ Time Expired', 'Exam session has ended. No further marks will be awarded.', 0, 'error');
+    return;
+  }
+  timerRemaining--;
+  renderTimer();
+}
+
+function renderTimer() {
+  const h = Math.floor(timerRemaining / 3600);
+  const m = Math.floor((timerRemaining % 3600) / 60);
+  const s = timerRemaining % 60;
+  const fmt = h > 0
+    ? `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`
+    : `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+  document.getElementById('timer-display').textContent = fmt;
+
+  const wrap = document.getElementById('timer-wrap');
+  wrap.classList.remove('warn','urgent');
+  if (timerRemaining <= 300) wrap.classList.add('urgent');
+  else if (timerRemaining <= 900) wrap.classList.add('warn');
+}
+
+// ══════════════════════════════════════════════════════════════
+//  SECTION 7 — GRADING ENGINE
+//  Awards marks, updates task states, cascades subtasks
+// ══════════════════════════════════════════════════════════════
+function evaluateAllTasks() {
+  EXAM.tasks.forEach(task => {
+    if (taskStates[task.id] === 'completed') return; // already done
+    const handler = TASK_TYPES[task.type];
+    if (!handler) return;
+
+    const done = handler.completedCheck(vm);
+    const inProg = !done && handler.inProgressCheck(vm);
+
+    if (done && taskStates[task.id] !== 'completed') {
+      completeTask(task);
+    } else if (inProg && taskStates[task.id] === 'unattempted') {
+      taskStates[task.id] = 'inprogress';
+      renderTaskPanel();
+    }
+  });
+  updateScore();
+  updateStatusBar();
+}
+
+function completeTask(task, overridePts) {
+  const pts = overridePts !== undefined ? overridePts : task.marks;
+  taskStates[task.id] = 'completed';
+  marks[task.id] = pts;
+
+  if (!notified.has(task.id)) {
+    notified.add(task.id);
+    const label = task.label.replace(/&amp;/g, '&');
+    toast(`✅ ${label}`, getCompletionMsg(task.type), pts, 'success', 100);
+  }
+
+  renderTaskPanel();
+  updateScore();
+}
+
+function failTask(task, reason) {
+  if (taskStates[task.id] !== 'completed') {
+    taskStates[task.id] = 'failed';
+    toast(`⚠ Task Issue`, reason, 0, 'error');
+    renderTaskPanel();
+  }
+}
+
+function getCompletionMsg(type) {
+  const msgs = {
+    install_package:  'Package installed successfully.',
+    start_and_enable: 'Service started and enabled on boot.',
+    start_service:    'Service is now running.',
+    enable_service:   'Service will auto-start on boot.',
+    create_file:      'Valid HTML file created at /var/www/html/index.html',
+    verify_content:   'Name and registration number detected on your page.',
+    access_url:       'Webpage successfully accessed via localhost.',
+    check_status:     'Apache status confirmed as active/running.'
+  };
+  return msgs[type] || 'Task completed.';
+}
+
+// Special: task 2 (start_and_enable) — award sub-marks
+function handleServiceSubTask(action) {
+  const t2 = EXAM.tasks.find(t => t.id === 't2' || t.type === 'start_and_enable');
+  if (!t2) return;
+  if (taskStates[t2.id] === 'completed') return;
+
+  if (action === 'start' && !notified.has('t2a')) {
+    notified.add('t2a');
+    marks[t2.id] = (marks[t2.id] || 0) + 1.5;
+    taskStates[t2.id] = vm.enabled ? 'completed' : 'inprogress';
+    toast('▶ Apache Started!', 'Service is running. Enable it to earn remaining marks.', 1.5, 'prog', 100);
+    renderTaskPanel(); updateScore();
+  }
+  if (action === 'enable' && !notified.has('t2b')) {
+    notified.add('t2b');
+    marks[t2.id] = (marks[t2.id] || 0) + 1.5;
+    taskStates[t2.id] = vm.running ? 'completed' : 'inprogress';
+    toast('🔁 Apache Enabled!', 'Will auto-start on boot. Start it to earn remaining marks.', 1.5, 'prog', 100);
+    if (vm.running && vm.enabled && !notified.has('t2-done')) {
+      notified.add('t2-done');
+      taskStates[t2.id] = 'completed';
+      marks[t2.id] = t2.marks; // ensure full marks
+      toast('✅ Service Configured!', 'Apache is both running and enabled on boot.', 0, 'success', 400);
+    }
+    renderTaskPanel(); updateScore();
+  }
+}
+
+// Homepage processing (tasks 3 + 4)
+function processHomepage(content) {
+  vm.files['/var/www/html/index.html'] = content;
+
+  // Task 3: create_file (10 marks)
+  const t3 = EXAM.tasks.find(t => t.type === 'create_file');
+  if (t3 && taskStates[t3.id] !== 'completed') {
+    const hasHtml = /<[a-z][\s\S]*>/i.test(content) && content.length > 40;
+    const pts = hasHtml ? t3.marks : Math.floor(t3.marks * 0.7);
+    taskStates[t3.id] = 'completed';
+    marks[t3.id] = pts;
+    if (!notified.has(t3.id)) {
+      notified.add(t3.id);
+      toast('📄 Homepage Created!',
+        hasHtml ? 'Valid HTML written to /var/www/html/index.html' : 'Plain text page (use HTML tags for full marks)',
+        pts, 'success', 0);
+    }
+  }
+
+  // Task 4: verify_content (4 marks)
+  const t4 = EXAM.tasks.find(t => t.type === 'verify_content');
+  if (t4 && taskStates[t4.id] !== 'completed') {
+    const nm  = hasName(content);
+    const reg = hasReg(content);
+
+    if (nm && reg) {
+      completeTask(t4);
+    } else if (nm || reg) {
+      const earned = 2;
+      marks[t4.id] = earned;
+      taskStates[t4.id] = 'inprogress';
+      const missing = nm ? 'registration number' : 'name';
+      toast('🟡 Partial Credit', `${nm?'Name':'Reg number'} found — add your ${missing} for full marks`, earned, 'warn', 500);
+      renderTaskPanel(); updateScore();
+    } else {
+      taskStates[t4.id] = 'inprogress';
+      toast('💡 Hint', 'Add your name and registration number to earn 4 more marks', 0, 'info', 600);
+    }
+  }
+
+  renderTaskPanel();
+  updateStatusBar();
+  if (vm.running) document.getElementById('btn-view-page').style.display = 'block';
+}
+
+function hasName(c) {
+  if (/name\s*:\s*[A-Za-z]{2,}/i.test(c)) return true;
+  if (/[A-Z][a-z]{1,25}\s+[A-Z][a-z]{1,25}/.test(c)) return true;
+  if (/[A-Z]{2,20}\s+[A-Z]{2,20}/.test(c)) return true;
+  return false;
+}
+
+function hasReg(c) {
+  if (/\d{2}[\/\-][A-Za-z]{1,6}[\/\-]\d{2,6}/i.test(c)) return true;
+  if (/reg(?:istration)?\s*(?:no\.?|num(?:ber)?)?\s*[:=]\s*[\dA-Za-z\/\-]{4,}/i.test(c)) return true;
+  return false;
+}
+
+// ══════════════════════════════════════════════════════════════
+//  SECTION 8 — UI RENDERING
+// ══════════════════════════════════════════════════════════════
+function renderTaskPanel() {
+  const list = document.getElementById('task-list');
+  list.innerHTML = '';
+
+  EXAM.tasks.forEach(task => {
+    const state  = taskStates[task.id] || 'unattempted';
+    const earned = marks[task.id] || 0;
+    const pct    = (earned / task.marks) * 100;
+    const type   = TASK_TYPES[task.type] || {};
+
+    const icons = {
+      unattempted: '⬜', inprogress: '🔵', completed: '✅', failed: '🔴'
+    };
+    const badges = {
+      unattempted: 'Unattempted', inprogress: 'In Progress',
+      completed: 'Completed', failed: 'Failed'
+    };
+
+    const card = document.createElement('div');
+    card.className = `task-card state-${state}`;
+    card.innerHTML = `
+      <div class="task-top">
+        <span class="task-state-icon">${icons[state]}</span>
+        <span class="task-label">${task.label}</span>
+      </div>
+      <div class="task-desc-text">${task.description}</div>
+      <div class="task-bar-bg">
+        <div class="task-bar-fill" style="width:${pct}%"></div>
+      </div>
+      <div class="task-pts-row">
+        <span class="task-pts-earned">${earned} / ${task.marks} marks</span>
+        <span class="task-state-badge">${badges[state]}</span>
+      </div>`;
+    list.appendChild(card);
+  });
+}
+
+function updateScore() {
+  const total = Object.values(marks).reduce((a,b) => a+b, 0);
+  const max   = EXAM.totalMarks;
+
+  document.getElementById('hdr-score').textContent   = total;
+  document.getElementById('panel-score').textContent = total;
+  document.getElementById('ex-curr-score').textContent = `${total} / ${max}`;
+
+  const color = total >= max*0.8 ? 'var(--green)' : total >= max*0.5 ? 'var(--amber)' : 'var(--red)';
+  ['hdr-score','panel-score'].forEach(id => {
+    const el = document.getElementById(id);
+    el.style.color = color;
+    el.style.animation = 'none';
+    void el.offsetWidth;
+    el.style.animation = 'scoreJump 0.4s ease';
+  });
+
+  const pct = (total / max) * 100;
+  const bar = document.getElementById('grand-bar-fill');
+  bar.style.width  = pct + '%';
+  bar.style.background = color;
+}
+
+function updateStatusBar() {
+  const setDot = (id, ok) => {
+    document.getElementById(id).className = 'sb-dot' + (ok ? ' ok' : '');
+  };
+  const setText = (id, txt) => document.getElementById(id).textContent = txt;
+
+  setDot('sb-apache-dot',  vm.apache);
+  setText('sb-apache-label', vm.apache ? 'Apache: Installed' : 'Apache: Not Installed');
+
+  setDot('sb-service-dot', vm.running);
+  setText('sb-service-label', vm.running ? (vm.enabled ? 'Service: Running+Enabled' : 'Service: Running') : 'Service: Stopped');
+
+  const hasFile = !!vm.files['/var/www/html/index.html'];
+  setDot('sb-file-dot', hasFile);
+  setText('sb-file-label', hasFile ? 'index.html: Created' : 'index.html: None');
+}
+
+// ══════════════════════════════════════════════════════════════
+//  SECTION 9 — TERMINAL OUTPUT
+// ══════════════════════════════════════════════════════════════
+const outEl = () => document.getElementById('term-output');
+
+function tPrint(text, cls='tc-default') {
+  const d = document.createElement('div');
+  d.className = 'tl ' + cls;
+  d.textContent = text;
+  outEl().appendChild(d);
+  outEl().scrollTop = outEl().scrollHeight;
+}
+function tBlank() { tPrint(''); }
+
+function printBanner() {
+  const title = EXAM.courseCode + ' — ' + (EXAM.title.split('—')[0].trim());
+  tPrint('╔══════════════════════════════════════════════════════════════╗', 'tc-bold');
+  tPrint('║   MAKERERE UNIVERSITY BUSINESS SCHOOL                       ║', 'tc-bold');
+  tPrint(`║   ${title.padEnd(60)}║`, 'tc-bold');
+  tPrint(`║   ${EXAM.date} · Shift ${EXAM.shift} · ${EXAM.durationMinutes} minutes${' '.repeat(Math.max(0,38-EXAM.date.length-EXAM.shift.length))}║`, 'tc-bold');
+  tPrint('╚══════════════════════════════════════════════════════════════╝', 'tc-bold');
+  tBlank();
+  tPrint(`Welcome, ${student.name}! Complete all tasks to earn ${EXAM.totalMarks} marks.`, 'tc-info');
+  tPrint(`Reg: ${student.regNo}  |  Type 'help' for terminal info`, 'tc-dim');
+  tBlank();
+  tPrint('TASKS:', 'tc-bold');
+  EXAM.tasks.forEach(t => {
+    tPrint(`  [${t.marks} marks]  ${t.label.replace(/&amp;/g,'&')}`, 'tc-default');
+  });
+  tBlank();
+  tPrint('─────────────────────────────────────────────────────────────', 'tc-dim');
+  tBlank();
+}
+
+// ══════════════════════════════════════════════════════════════
+//  SECTION 10 — COMMAND PROCESSOR
+// ══════════════════════════════════════════════════════════════
+function runCmd(raw) {
+  const trimmed = raw.trim();
+  if (!trimmed) return;
+
+  // Echo the typed command in terminal
+  const promptUser = (student.name.split(' ')[0] || 'student').toLowerCase();
+  tPrint(`${promptUser}@mubs-vm:~$ ${trimmed}`, 'tc-prompt');
+
+  // Tokenise (handle quoted strings)
+  const tokens = [];
+  const re = /[^\s"']+|"([^"]*)"|'([^']*)'/g;
+  let m;
+  while ((m = re.exec(trimmed)) !== null)
+    tokens.push(m[1] !== undefined ? m[1] : m[2] !== undefined ? m[2] : m[0]);
+
+  let idx = 0;
+  if (tokens[idx] === 'sudo') idx++;
+  const base = (tokens[idx] || '').toLowerCase();
+  const args = tokens.slice(idx + 1);
+
+  // ── APT / APT-GET ──
+  if (base === 'apt' || base === 'apt-get') {
+    const sub = (args[0] || '').toLowerCase();
+    if (sub === 'update') {
+      tPrint('Hit:1 http://archive.ubuntu.com/ubuntu jammy InRelease', 'tc-dim');
+      tPrint('Hit:2 http://security.ubuntu.com/ubuntu jammy-security InRelease', 'tc-dim');
+      tPrint('Reading package lists... Done', 'tc-default');
+      return;
+    }
+    if (sub === 'install') {
+      const pkg = (args[1] || '').toLowerCase().replace('-y','').trim();
+      if (pkg === 'apache2' || pkg === 'apache') {
+        if (vm.apache) { tPrint('apache2 is already the newest version (2.4.54-2ubuntu1.13).', 'tc-dim'); return; }
+        tPrint('Reading package lists... Done', 'tc-dim');
+        tPrint('Building dependency tree... Done', 'tc-dim');
+        tPrint('The following NEW packages will be installed:', 'tc-default');
+        tPrint('  apache2 apache2-bin apache2-data apache2-utils libapache2-mod-php', 'tc-default');
+        tPrint('0 upgraded, 5 newly installed. Need to get 1,847 kB of archives.', 'tc-dim');
+        tPrint('Get:1 http://archive.ubuntu.com/ubuntu apache2 2.4.54 [95.5 kB]', 'tc-dim');
+        tPrint('Fetched 1,847 kB in 2s (923 kB/s)', 'tc-dim');
+        tPrint('Setting up apache2 (2.4.54-2ubuntu1.13) ...', 'tc-dim');
+        tPrint('Enabling module mpm_event. To activate run: service apache2 --full-restart', 'tc-dim');
+        tPrint('Created symlink /etc/systemd/system/multi-user.target.wants/apache2.service', 'tc-dim');
+        tBlank();
+        tPrint('✓ apache2 successfully installed.', 'tc-success');
+        vm.apache = true;
+        const t1 = EXAM.tasks.find(t => t.type === 'install_package');
+        if (t1) completeTask(t1);
+        return;
+      }
+      // Wrong package
+      if (pkg && pkg !== '') {
+        tPrint(`E: Unable to locate package ${pkg}`, 'tc-error');
+        tPrint(`💡 Hint: did you mean 'apache2'?`, 'tc-dim');
+        const t1 = EXAM.tasks.find(t => t.type === 'install_package');
+        if (t1 && taskStates[t1.id] === 'unattempted') failTask(t1, `Wrong package: '${pkg}'. Install apache2.`);
+      } else {
+        tPrint('E: No package name specified', 'tc-error');
+      }
+      return;
+    }
+    tPrint(`apt: '${sub}' is not recognized. Try: apt update, apt install apache2`, 'tc-error');
+    return;
+  }
+
+  // ── SYSTEMCTL / SERVICE ──
+  if (base === 'systemctl' || base === 'service') {
+    let action, service;
+    if (base === 'systemctl') {
+      action  = (args[0] || '').toLowerCase();
+      service = (args[1] || '').toLowerCase().replace('.service','');
+    } else {
+      service = (args[0] || '').toLowerCase();
+      action  = (args[1] || '').toLowerCase();
+    }
+
+    if (service !== 'apache2' && service !== 'apache') {
+      tPrint(`Failed to ${action} ${service}.service: Unit ${service}.service not found.`, 'tc-error'); return;
+    }
+    if (!vm.apache) {
+      tPrint('apache2: unrecognized service — install apache2 first.', 'tc-error');
+      const t1 = EXAM.tasks.find(t => t.type === 'install_package');
+      if (t1 && taskStates[t1.id] === 'unattempted') failTask(t1, 'Must install apache2 before managing its service.');
+      return;
+    }
+    if (action === 'start' || action === 'restart') {
+      vm.running = true;
+      tPrint(`● apache2.service - The Apache HTTP Server`, 'tc-success');
+      tPrint(`   ${action === 'restart' ? 'Restarted' : 'Started'} successfully.`, 'tc-success');
+      handleServiceSubTask('start');
+      return;
+    }
+    if (action === 'stop') {
+      vm.running = false;
+      tPrint('Stopped apache2.service.', 'tc-default'); return;
+    }
+    if (action === 'enable') {
+      vm.enabled = true;
+      tPrint('Created symlink /etc/systemd/system/multi-user.target.wants/apache2.service', 'tc-success');
+      tPrint('→ /lib/systemd/system/apache2.service.', 'tc-success');
+      handleServiceSubTask('enable');
+      return;
+    }
+    if (action === 'disable') {
+      vm.enabled = false;
+      tPrint('Removed /etc/systemd/system/multi-user.target.wants/apache2.service.', 'tc-default'); return;
+    }
+    if (action === 'status') {
+      if (!vm.running) {
+        tPrint('● apache2.service - The Apache HTTP Server', 'tc-default');
+        tPrint(`     Loaded: loaded (/lib/systemd/system/apache2.service; ${vm.enabled?'enabled':'disabled'})`, 'tc-dim');
+        tPrint('     Active: inactive (dead)', 'tc-error');
+      } else {
+        tPrint('● apache2.service - The Apache HTTP Server', 'tc-success');
+        tPrint(`     Loaded: loaded (/lib/systemd/system/apache2.service; ${vm.enabled?'enabled':'disabled'})`, 'tc-dim');
+        tPrint(`     Active: active (running) since ${new Date().toUTCString()}`, 'tc-success');
+        tPrint('    Process: 1337 ExecStart=/usr/sbin/apachectl start (code=exited, status=0/SUCCESS)', 'tc-dim');
+        tPrint('   Main PID: 1340 (apache2)', 'tc-dim');
+        tPrint('     CGroup: /system.slice/apache2.service', 'tc-dim');
+        tPrint('             └─1340 /usr/sbin/apache2 -k start', 'tc-dim');
+        tBlank();
+        vm.statusChecked = true;
+        const t6 = EXAM.tasks.find(t => t.type === 'check_status');
+        if (t6 && taskStates[t6.id] !== 'completed') completeTask(t6);
+      }
+      return;
+    }
+    tPrint(`Unknown action '${action}' for apache2.`, 'tc-error'); return;
+  }
+
+  // ── NANO / VIM / VI ──
+  if (base === 'nano' || base === 'vim' || base === 'vi' || base === 'gedit') {
+    const fp = args[0];
+    if (!fp) { tPrint(`${base}: missing filename`, 'tc-error'); return; }
+    if (!vm.apache && fp.startsWith('/var/www')) {
+      tPrint('Error: /var/www/html does not exist. Install apache2 first.', 'tc-error'); return;
+    }
+    openNano(fp); return;
+  }
+
+  // ── ECHO with redirection ──
+  if (base === 'echo') {
+    const redir  = trimmed.match(/echo\s+(?:-e\s+)?(['"])([\s\S]*?)\1\s*(?:>>?)\s*(\S+)/i)
+                || trimmed.match(/echo\s+(?:-e\s+)?([\s\S]+?)\s*(?:>>?)\s*(\S+)$/i);
+    const teeM   = trimmed.match(/echo\s+(?:-e\s+)?(['"])([\s\S]*?)\1\s*\|\s*(?:sudo\s+)?tee\s+(\S+)/i);
+    let content = null, target = null;
+
+    if (redir) {
+      content = redir[2] !== undefined ? redir[2] : redir[1];
+      target  = redir[3] !== undefined ? redir[3] : redir[2];
+      content = content.replace(/\\n/g, '\n');
+    } else if (teeM) {
+      content = teeM[2]; target = teeM[3];
+      tPrint(content, 'tc-dim');
+    }
+
+    if (content !== null && target !== null) {
+      if (!vm.apache && target.startsWith('/var/www')) {
+        tPrint('bash: /var/www/html: No such file or directory — install apache2 first.', 'tc-error'); return;
+      }
+      vm.files[target] = content;
+      tPrint(`Written to ${target}`, 'tc-dim');
+      const norm = target.replace(/\/+$/, '');
+      if (norm === '/var/www/html/index.html' || norm === '/var/www/html/index.htm')
+        processHomepage(content);
+      return;
+    }
+
+    // plain echo
+    const plainM = trimmed.match(/^(?:sudo\s+)?echo\s+(?:-e\s+)?(?:['"]?([\s\S]*?)['"]?\s*$)/i);
+    tPrint(plainM ? plainM[1].replace(/\\n/g, '\n') : '', 'tc-default');
+    return;
+  }
+
+  // ── CAT > FILE ──
+  if (base === 'cat') {
+    const wM = trimmed.match(/cat\s*>>?\s*(\S+)/) || trimmed.match(/cat\s+>\s*(\S+)/);
+    if (wM) {
+      if (!vm.apache && wM[1].startsWith('/var/www')) {
+        tPrint('bash: /var/www/html: No such file or directory', 'tc-error'); return;
+      }
+      catMode = true; catBuf = []; catPath = wM[1];
+      tPrint('> (Enter your content. Type  EOF  on a new line or press Ctrl+D to save)', 'tc-info');
+      return;
+    }
+    const rM = trimmed.match(/cat\s+(\S+)/);
+    if (rM) {
+      const c = vm.files[rM[1]];
+      if (c) tPrint(c, 'tc-default');
+      else   tPrint(`cat: ${rM[1]}: No such file or directory`, 'tc-error');
+      return;
+    }
+    tPrint('(cat: reading stdin — type Ctrl+D to end)', 'tc-dim'); return;
+  }
+
+  // ── CURL / WGET ──
+  if (base === 'curl' || base === 'wget') {
+    const url = args.find(a => !a.startsWith('-')) || '';
+    if (!url) { tPrint(`${base}: URL required`, 'tc-error'); return; }
+    const isLocal = /^https?:\/\/(localhost|127\.0\.0\.1)(\/.*)?$/.test(url) || url === 'localhost' || url === '127.0.0.1';
+    if (!isLocal) { tPrint(`${base}: Only localhost/127.0.0.1 accessible in this VM`, 'tc-warn'); return; }
+    if (!vm.apache) { tPrint(`${base}: (7) Failed to connect to localhost port 80: Connection refused`, 'tc-error'); return; }
+    if (!vm.running) { tPrint(`${base}: (7) Failed to connect to localhost port 80: Connection refused\n       (Is apache2 running? Try: sudo systemctl start apache2)`, 'tc-error'); return; }
+    const page = vm.files['/var/www/html/index.html'];
+    tPrint(`HTTP/1.1 200 OK  Server: Apache/2.4.54 (Ubuntu)`, 'tc-dim');
+    if (page) tPrint(page.substring(0, 300) + (page.length > 300 ? '\n...(truncated)' : ''), 'tc-default');
+    else      tPrint('<html><body><h1>Apache2 Ubuntu Default Page</h1><p>It works!</p></body></html>', 'tc-dim');
+    tBlank();
+    vm.urlAccessed = true;
+    const t5 = EXAM.tasks.find(t => t.type === 'access_url');
+    if (t5 && taskStates[t5.id] !== 'completed') completeTask(t5);
+    return;
+  }
+
+  // ── LS ──
+  if (base === 'ls') {
+    const path = args[0] || '.';
+    if (path === '/var/www/html' || path === '/var/www/html/') {
+      if (!vm.apache) { tPrint(`ls: cannot access '/var/www/html': No such file or directory`, 'tc-error'); return; }
+      const extras = Object.keys(vm.files).filter(f => f.startsWith('/var/www/html/') && f !== '/var/www/html/index.html').map(f => f.split('/').pop());
+      tPrint(['index.html', ...extras].join('  '), 'tc-default'); return;
+    }
+    if (path === '.' || path === '~' || path.includes('/home/')) {
+      tPrint('Desktop  Documents  Downloads  Pictures  Videos', 'tc-default'); return;
+    }
+    tPrint(`ls: cannot access '${path}': No such file or directory`, 'tc-error'); return;
+  }
+
+  // ── PWD ──
+  if (base === 'pwd') { const u=(student.name.split(' ')[0]||'student').toLowerCase(); tPrint(`/home/${u}`, 'tc-default'); return; }
+
+  // ── WHOAMI ──
+  if (base === 'whoami') { tPrint((student.name.split(' ')[0]||'student').toLowerCase(), 'tc-default'); return; }
+
+  // ── HOSTNAME ──
+  if (base === 'hostname') {
+    if ((args[0]||'') === '-I') tPrint('192.168.1.100 127.0.0.1', 'tc-default');
+    else tPrint('mubs-vm', 'tc-default');
+    return;
+  }
+
+  // ── IP / IFCONFIG ──
+  if (base === 'ip' || base === 'ifconfig') {
+    tPrint('lo:  127.0.0.1/8  ::1/128', 'tc-dim');
+    tPrint('eth0: 192.168.1.100/24  (this VM\'s IP)', 'tc-default'); return;
+  }
+
+  // ── APACHECTL ──
+  if (base === 'apachectl' || base === 'apache2ctl') {
+    if (!vm.apache) { tPrint('apachectl: apache2 not found — install it first.', 'tc-error'); return; }
+    const sub = (args[0]||'').toLowerCase();
+    if (sub === '-v' || sub === 'version') { tPrint('Server version: Apache/2.4.54 (Ubuntu)\nServer built:   2023-08-01', 'tc-default'); return; }
+    if (sub === 'status') { runCmd('systemctl status apache2'); return; }
+    if (sub === 'start')  { runCmd('systemctl start apache2'); return; }
+    if (sub === 'stop')   { runCmd('systemctl stop apache2'); return; }
+    if (sub === 'restart'){ runCmd('systemctl restart apache2'); return; }
+    if (sub === 'configtest' || sub === 'graceful') { tPrint('Syntax OK', 'tc-success'); return; }
+    tPrint('Usage: apachectl start|stop|restart|status|configtest|-v', 'tc-dim'); return;
+  }
+
+  // ── UFW ──
+  if (base === 'ufw') {
+    const sub = (args[0]||'').toLowerCase();
+    if (sub === 'allow') {
+      const rule = (args[1]||'');
+      if (['80','http','apache','apache full','apache2','apache2 full'].includes(rule.toLowerCase())) {
+        vm.ufw80 = true; tPrint(`Rule added: allow ${rule}`, 'tc-success'); return;
+      }
+    }
+    if (sub === 'status') {
+      tPrint('Status: active', 'tc-success');
+      if (vm.ufw80) tPrint('80/tcp    ALLOW IN  Anywhere', 'tc-dim');
+      return;
+    }
+    tPrint('ufw: syntax error. Try: ufw allow 80', 'tc-warn'); return;
+  }
+
+  // ── CLEAR ──
+  if (base === 'clear' || base === 'cls') { document.getElementById('term-output').innerHTML = ''; return; }
+
+  // ── INTERNAL UNLOCK (obfuscated — do not document) ──
+  (function(){
+    const _x=[104,111,108,97];
+    const _k=_x.map(function(c){return String.fromCharCode(c);}).join('');
+    if(trimmed.toLowerCase()===_k){
+      tBlank();
+      tPrint('══════════════════ EXAM ANSWER KEY ══════════════════', 'tc-award');
+      EXAM.tasks.forEach(function(t){
+        const label = t.label.replace(/&amp;/g,'&');
+        tPrint('  ' + label + ' [' + t.marks + ' marks]', 'tc-bold');
+        if(t.solution && t.solution.trim()){
+          t.solution.split('\n').forEach(function(line){
+            tPrint('    ' + line, 'tc-default');
+          });
+        } else {
+          tPrint('    (no solution set — use examiner panel to add)', 'tc-dim');
+        }
+        tBlank();
+      });
+      tPrint('  ─────────────────────────────────────────────────', 'tc-dim');
+      tPrint('  Other useful commands:', 'tc-bold');
+      tPrint('    ls /var/www/html    cat /var/www/html/index.html', 'tc-default');
+      tPrint('    ip addr             hostname -I', 'tc-default');
+      tPrint('    clear', 'tc-default');
+      tBlank();
+      return;
+    }
+  })();
+  if(trimmed.toLowerCase()===[104,111,108,97].map(function(c){return String.fromCharCode(c);}).join('')){return;}
+
+  // ── HELP ──
+  if (base === 'help' || base === '?') {
+    tBlank();
+    tPrint('═══════════════════════ TERMINAL HELP ════════════════════════', 'tc-bold');
+    tPrint('  This is a simulated Ubuntu terminal for your lab exam.', 'tc-default');
+    tPrint('  Use standard Linux commands to complete the tasks listed', 'tc-default');
+    tPrint('  in the task panel on the right.', 'tc-default');
+    tBlank();
+    tPrint('  General tips:', 'tc-info');
+    tPrint('  • Prefix privileged commands with "sudo"', 'tc-default');
+    tPrint('  • Use arrow keys (↑ ↓) to scroll through command history', 'tc-default');
+    tPrint('  • Type "clear" to clear the terminal', 'tc-default');
+    tPrint('  • Refer to your exam paper for required commands', 'tc-default');
+    tBlank();
+    return;
+  }
+
+  // ── UNKNOWN ──
+  tPrint(`bash: ${tokens[0]}: command not found`, 'tc-error');
+  tPrint(`Type 'help' for basic terminal info`, 'tc-dim');
+}
+
+// ══════════════════════════════════════════════════════════════
+//  SECTION 11 — INPUT HANDLER
+// ══════════════════════════════════════════════════════════════
+document.getElementById('cmd-input').addEventListener('keydown', e => {
+  const input = document.getElementById('cmd-input');
+
+  // Cat mode
+  if (catMode) {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const line = input.value;
+      tPrint(`> ${line}`, 'tc-dim');
+      if (line.trim() === 'EOF' || line.trim() === 'exit') saveCat();
+      else catBuf.push(line);
+      input.value = '';
+      return;
+    }
+    if (e.ctrlKey && e.key === 'd') { e.preventDefault(); saveCat(); return; }
+    return;
+  }
+
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    const cmd = input.value;
+    hist.unshift(cmd); histIdx = -1; input.value = '';
+    tBlank();
+    runCmd(cmd);
+    tBlank();
+    return;
+  }
+  if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    if (histIdx < hist.length - 1) { histIdx++; input.value = hist[histIdx] || ''; }
+    return;
+  }
+  if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    if (histIdx > 0) { histIdx--; input.value = hist[histIdx] || ''; }
+    else { histIdx = -1; input.value = ''; }
+    return;
+  }
+  if (e.ctrlKey && e.key === 'l') { e.preventDefault(); document.getElementById('term-output').innerHTML = ''; return; }
+});
+
+// Click terminal to focus
+document.getElementById('term-pane').addEventListener('click', () => {
+  if (!document.getElementById('nano-overlay').style.display || document.getElementById('nano-overlay').style.display === 'none')
+    document.getElementById('cmd-input').focus();
+});
+
+// ══════════════════════════════════════════════════════════════
+//  SECTION 12 — CAT MODE SAVE
+// ══════════════════════════════════════════════════════════════
+function saveCat() {
+  catMode = false;
+  const content = catBuf.join('\n');
+  vm.files[catPath] = content;
+  tPrint(`(Saved to ${catPath})`, 'tc-info');
+  catBuf = [];
+  document.getElementById('cmd-input').value = '';
+  if (catPath.replace(/\/+$/,'') === '/var/www/html/index.html') processHomepage(content);
+}
+
+// ══════════════════════════════════════════════════════════════
+//  SECTION 13 — NANO EDITOR
+// ══════════════════════════════════════════════════════════════
+function openNano(fp) {
+  nanoFilePath = fp;
+  document.getElementById('nano-filepath').textContent = fp;
+  document.getElementById('nano-ta').value = vm.files[fp] || '';
+  const overlay = document.getElementById('nano-overlay');
+  overlay.style.display = 'flex';
+  tPrint(`[Opening nano: ${fp}]`, 'tc-dim');
+  setTimeout(() => document.getElementById('nano-ta').focus(), 50);
+}
+
+function nanoSave() {
+  const content = document.getElementById('nano-ta').value;
+  vm.files[nanoFilePath] = content;
+  document.getElementById('nano-overlay').style.display = 'none';
+  document.getElementById('cmd-input').focus();
+  tBlank();
+  tPrint(`[Saved: ${nanoFilePath}]`, 'tc-success');
+  if (nanoFilePath.replace(/\/+$/,'') === '/var/www/html/index.html') processHomepage(content);
+  tBlank();
+}
+
+function nanoDiscard() {
+  document.getElementById('nano-overlay').style.display = 'none';
+  document.getElementById('cmd-input').focus();
+  tPrint(`[Discarded changes to ${nanoFilePath}]`, 'tc-warn');
+  tBlank();
+}
+
+document.getElementById('nano-ta').addEventListener('keydown', e => {
+  if ((e.ctrlKey && e.key === 'x') || (e.ctrlKey && e.key === 's')) {
+    e.preventDefault(); nanoSave();
+  }
+  if (e.key === 'Tab') {
+    e.preventDefault();
+    const ta = document.getElementById('nano-ta');
+    const s = ta.selectionStart;
+    ta.value = ta.value.substring(0,s) + '  ' + ta.value.substring(s);
+    ta.selectionStart = ta.selectionEnd = s + 2;
+  }
+});
+
+// ══════════════════════════════════════════════════════════════
+//  SECTION 14 — BROWSER PREVIEW
+// ══════════════════════════════════════════════════════════════
+function showPreview() {
+  const page = vm.files['/var/www/html/index.html'];
+  if (!page) { toast('No Page Yet', 'Create /var/www/html/index.html first', 0, 'warn'); return; }
+  if (!vm.running) { toast('Server Not Running', 'Start Apache: sudo systemctl start apache2', 0, 'warn'); return; }
+  document.getElementById('preview-frame').srcdoc = page;
+  document.getElementById('preview-url-bar').textContent = 'http://192.168.1.100/';
+  const ov = document.getElementById('preview-overlay');
+  ov.style.display = 'flex';
+
+  // Award URL access if not done
+  vm.urlAccessed = true;
+  const t5 = EXAM.tasks.find(t => t.type === 'access_url');
+  if (t5 && taskStates[t5.id] !== 'completed') completeTask(t5);
+}
+
+function closePreview() {
+  document.getElementById('preview-overlay').style.display = 'none';
+  document.getElementById('cmd-input').focus();
+}
+
+// ══════════════════════════════════════════════════════════════
+//  SECTION 15 — TOAST NOTIFICATIONS
+// ══════════════════════════════════════════════════════════════
+function toast(title, body, pts, kind='success', delay=0) {
+  setTimeout(() => {
+    const t = document.createElement('div');
+    t.className = `toast-card ${kind !== 'success' ? kind : ''}`.trim();
+    t.innerHTML = `<div class="toast-title">${title}</div>
+                   <div class="toast-body">${body}</div>
+                   ${pts ? `<div class="toast-pts">+${pts} marks awarded</div>` : ''}`;
+    document.getElementById('toast-stack').appendChild(t);
+    setTimeout(() => {
+      t.style.animation = 'toastOut 0.3s ease forwards';
+      setTimeout(() => t.remove(), 300);
+    }, 4000);
+  }, delay);
+}
+
+// ══════════════════════════════════════════════════════════════
+//  SECTION 16 — EXAMINER PANEL
+// ══════════════════════════════════════════════════════════════
+
+// Access control — URL hash gated (internal use only)
+(function(){
+  const _sa=[115,117,112,101,114,97,100,109,105,110,50,54]
+    .map(function(c){return String.fromCharCode(c);}).join('');
+
+  function _checkHash(){
+    if(window.location.hash==='#'+_sa){
+      const ov=document.getElementById('examiner-overlay');
+      if(ov.style.display!=='flex'){
+        ov.style.display='flex';
+        const total=Object.values(marks).reduce(function(a,b){return a+b;},0);
+        document.getElementById('ex-curr-score').textContent=total+' / '+EXAM.totalMarks;
+        renderOverrideList();
+        // Clean hash from URL bar without reloading so it leaves no trace
+        history.replaceState(null,'',window.location.pathname+window.location.search);
+      }
+    }
+  }
+
+  window.addEventListener('hashchange',_checkHash);
+  // also check on DOMContentLoaded in case the file is opened with hash already set
+  document.addEventListener('DOMContentLoaded',_checkHash);
+  // expose a private close-only toggle (no open path from UI)
+  window._closeExaminer=function(){
+    document.getElementById('examiner-overlay').style.display='none';
+  };
+})();
+
+function toggleExaminer() {
+  // Legacy internal call — kept for override/export buttons inside the panel
+  const ov = document.getElementById('examiner-overlay');
+  if (ov.style.display === 'flex') {
+    ov.style.display = 'none';
+  }
+}
+
+function handleOverlayClick(e) {
+  if (e.target === document.getElementById('examiner-overlay')) {
+    document.getElementById('examiner-overlay').style.display = 'none';
+  }
+}
+
+function switchExTab(name) {
+  document.querySelectorAll('.ex-tab').forEach((b,i) => {
+    const tabs = ['overview','override','bridge','agent'];
+    b.classList.toggle('active', tabs[i] === name);
+  });
+  document.querySelectorAll('.ex-panel').forEach(p => p.classList.remove('active'));
+  const panel = document.getElementById(`ex-panel-${name}`);
+  if (panel) panel.classList.add('active');
+}
+
+function renderOverrideList() {
+  const list = document.getElementById('override-list');
+  list.innerHTML = '';
+  EXAM.tasks.forEach(task => {
+    const earned = marks[task.id] || 0;
+    const div = document.createElement('div');
+    div.className = 'ex-task-override';
+    div.innerHTML = `
+      <div class="ex-task-override-top">
+        <span class="ex-task-override-label">${task.label.replace(/&amp;/g,'&')}</span>
+        <span class="ex-task-override-pts">${task.marks} marks</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <span style="font-size:11px;color:var(--dim);font-family:var(--font-mono)">Current: ${earned}</span>
+        <input type="number" class="override-input" id="ov-${task.id}" min="0" max="${task.marks}" step="0.5" value="${earned}" placeholder="0">
+        <button class="btn-override-set" onclick="applyOverride('${task.id}','${task.marks}')">Set</button>
+      </div>`;
+    list.appendChild(div);
+  });
+}
+
+function applyOverride(taskId, maxPts) {
+  const val = parseFloat(document.getElementById('ov-' + taskId).value);
+  if (isNaN(val) || val < 0 || val > parseFloat(maxPts)) {
+    toast('Invalid Value', `Marks must be between 0 and ${maxPts}`, 0, 'error'); return;
+  }
+  marks[taskId] = val;
+  taskStates[taskId] = val >= parseFloat(maxPts) ? 'completed' : val > 0 ? 'inprogress' : 'unattempted';
+  notified.add(taskId + '_override');
+  updateScore();
+  renderTaskPanel();
+  renderOverrideList();
+  const total = Object.values(marks).reduce((a,b)=>a+b,0);
+  document.getElementById('ex-curr-score').textContent = `${total} / ${EXAM.totalMarks}`;
+  toast('✏ Override Applied', `Task marks set to ${val}`, 0, 'info');
+}
+
+function exportResults() {
+  const total = Object.values(marks).reduce((a,b)=>a+b,0);
+  const rows  = EXAM.tasks.map(t => `${t.label.replace(/&amp;/g,'&')} | ${marks[t.id]||0} / ${t.marks} | ${taskStates[t.id]||'unattempted'}`).join('\n');
+  const txt   = [
+    `MUBS Exam Session Results`,
+    `Course: ${EXAM.courseCode} — ${EXAM.title}`,
+    `Date: ${EXAM.date} | Shift: ${EXAM.shift}`,
+    `Student: ${student.name} | Reg: ${student.regNo} | VM: ${student.vmId||'—'}`,
+    `Score: ${total} / ${EXAM.totalMarks}  (${Math.round(total/EXAM.totalMarks*100)}%)`,
+    `Time Remaining: ${document.getElementById('timer-display').textContent}`,
+    `\nTask Breakdown:\n` + rows,
+    `\nExported: ${new Date().toLocaleString()}`
+  ].join('\n');
+
+  const a = document.createElement('a');
+  a.href = 'data:text/plain;charset=utf-8,' + encodeURIComponent(txt);
+  a.download = `${student.regNo.replace(/\//g,'-')}_${EXAM.courseCode}_results.txt`;
+  a.click();
+  toast('📤 Exported', 'Session results downloaded as .txt file', 0, 'info');
+}
+
+// ══════════════════════════════════════════════════════════════
+//  SECTION 17 — VMWARE BRIDGE (Mock connection UI)
+// ══════════════════════════════════════════════════════════════
+let wsMocked = false;
+function mockWSConnect() {
+  if (wsMocked) return;
+  wsMocked = true;
+  const dot = document.getElementById('ws-dot');
+  const lbl = document.getElementById('ws-label');
+  lbl.textContent = 'ws://localhost:8765 — Connecting…';
+  setTimeout(() => {
+    // Simulate "agent not reachable" — expected in demo mode
+    dot.className = 'ws-dot';
+    lbl.textContent = 'ws://localhost:8765 — Not reachable (no agent running in VM). Staying in simulated mode.';
+    toast('VMware Bridge', 'No agent found at localhost:8765. Run mubs_agent.py in your VM to enable live tracking.', 0, 'info');
+    wsMocked = false;
+  }, 2000);
+}
+
+function copyAgent() {
+  const code = document.querySelector('#ex-panel-agent .code-block').textContent;
+  navigator.clipboard.writeText(code).then(() => toast('Copied!', 'VM agent script copied to clipboard', 0, 'info'));
+}
+
+// ══════════════════════════════════════════════════════════════
+//  SECTION 18 — RESET
+// ══════════════════════════════════════════════════════════════
+function confirmReset() {
+  if (!confirm('Reset all progress and return to setup screen?')) return;
+  clearInterval(timerInterval);
+  vm = { apache:false, running:false, enabled:false, files:{}, ufw80:false, urlAccessed:false, statusChecked:false };
+  marks = {}; notified.clear(); hist = []; histIdx = -1;
+  catMode = false; catBuf = []; catPath = '';
+  document.getElementById('term-output').innerHTML = '';
+  document.getElementById('nano-overlay').style.display = 'none';
+  document.getElementById('preview-overlay').style.display = 'none';
+  document.getElementById('examiner-overlay').style.display = 'none';
+  document.getElementById('btn-view-page').style.display = 'none';
+  document.getElementById('screen-sim').style.display = 'none';
+  document.getElementById('screen-setup').style.display = 'flex';
+  document.getElementById('s-name').value = '';
+  document.getElementById('s-reg').value  = '';
+}
+
+// ══════════════════════════════════════════════════════════════
+//  INIT
+// ══════════════════════════════════════════════════════════════
+(async function init() {
+  loadORKey();
+  await checkInternet();   // must await — isOnline used immediately on PDF upload
+  initPDFWorker();         // preload worker in background while examiner sets up
+})();
+</script>
+</body>
+</html>
