@@ -904,25 +904,45 @@ select.form-input { cursor: pointer; }
           <span id="inet-label">Checking connection…</span>
         </div>
 
-        <!-- OpenRouter AI Key -->
+        <!-- OpenRouter AI Keys -->
         <div class="ai-key-section" id="ai-key-section">
           <div class="ai-key-header">
             <span class="ai-key-title">🤖 AI Parser — OpenRouter</span>
-            <span class="ai-key-badge">FREE</span>
+            <span class="ai-key-badge" id="ai-key-badge-global">CONFIGURE</span>
           </div>
-          <div class="ai-key-row">
-            <input type="password" id="or-key" class="ai-key-input" placeholder="sk-or-v1-…  (paste your OpenRouter key)">
-            <button class="btn-save-key" onclick="saveORKey()">Save</button>
+
+          <!-- Key 1: Llama 4 Maverick -->
+          <div style="margin-bottom:10px">
+            <div style="font-size:11px;color:var(--dim);margin-bottom:5px;font-family:var(--font-mono)">
+              🦙 Primary — Meta Llama 4 Maverick
+            </div>
+            <div class="ai-key-row">
+              <input type="password" id="or-key-llama" class="ai-key-input" placeholder="sk-or-v1-… (Llama 4 Maverick key)">
+              <button class="btn-save-key" onclick="saveKey('llama')">Save</button>
+            </div>
+            <div class="ai-key-status empty" id="ai-key-status-llama">No key saved</div>
           </div>
-          <div class="ai-key-status empty" id="ai-key-status">No key saved — AI parsing disabled</div>
-          <p class="ai-key-help">
-            Get a free API key at <a href="https://openrouter.ai" target="_blank">openrouter.ai</a> → Sign up → Keys.
-            Free models are $0/token. Key is saved locally in your browser.
+
+          <!-- Key 2: DeepSeek V3.2 -->
+          <div style="margin-bottom:6px">
+            <div style="font-size:11px;color:var(--dim);margin-bottom:5px;font-family:var(--font-mono)">
+              🧠 Secondary — DeepSeek V3.2
+            </div>
+            <div class="ai-key-row">
+              <input type="password" id="or-key-deepseek" class="ai-key-input" placeholder="sk-or-v1-… (DeepSeek V3.2 key)">
+              <button class="btn-save-key" onclick="saveKey('deepseek')">Save</button>
+            </div>
+            <div class="ai-key-status empty" id="ai-key-status-deepseek">No key saved</div>
+          </div>
+
+          <p class="ai-key-help" style="margin-top:8px">
+            Keys are saved locally in your browser only — never sent anywhere except OpenRouter.
+            Falls back to free models if both keys are missing.
           </p>
         </div>
 
         <p style="font-size:12px;color:var(--dim);margin-bottom:14px;line-height:1.6">
-          Upload your exam paper PDF. The Query will parse the questions, marks, and learning outcomes, then automatically configure the grader. No manual setup needed.
+          Upload your exam paper PDF. The AI will parse the questions, marks, and tasks, then auto-generate expected solutions. No manual setup needed.
         </p>
 
         <!-- OPTION A: PDF Upload -->
@@ -1588,39 +1608,70 @@ setInterval(async () => {
 }, 30000);
 
 // ══════════════════════════════════════════════════════════════
-//  OPENROUTER KEY MANAGEMENT
+//  OPENROUTER KEY MANAGEMENT — multi-key (Llama + DeepSeek)
 // ══════════════════════════════════════════════════════════════
+// _orKey kept as alias to whichever key is available (for legacy callers)
 let _orKey = '';
+let _keys = { llama: '', deepseek: '' };
+
+const KEY_MODELS = {
+  llama:    'meta-llama/llama-4-maverick',
+  deepseek: 'deepseek/deepseek-chat-v3-5:free'
+};
 
 function loadORKey() {
-  try { _orKey = localStorage.getItem('mubs_or_key') || ''; } catch(_) {}
+  try {
+    _keys.llama    = localStorage.getItem('mubs_or_key_llama')    || '';
+    _keys.deepseek = localStorage.getItem('mubs_or_key_deepseek') || '';
+    // legacy single-key migration
+    const legacy   = localStorage.getItem('mubs_or_key') || '';
+    if (legacy && !_keys.llama) { _keys.llama = legacy; }
+  } catch(_) {}
+  _orKey = _keys.llama || _keys.deepseek; // for backward compat
   updateAIKeyUI();
 }
 
-function saveORKey() {
-  const val = document.getElementById('or-key').value.trim();
-  if (!val) { toast('No Key', 'Paste your OpenRouter API key first.', 0, 'error'); return; }
-  _orKey = val;
-  try { localStorage.setItem('mubs_or_key', val); } catch(_) {}
-  document.getElementById('or-key').value = '';
+function saveKey(slot) {
+  const inputId = slot === 'llama' ? 'or-key-llama' : 'or-key-deepseek';
+  const val = document.getElementById(inputId).value.trim();
+  if (!val) { toast('No Key', 'Paste the API key first.', 0, 'error'); return; }
+  _keys[slot] = val;
+  try { localStorage.setItem(`mubs_or_key_${slot}`, val); } catch(_) {}
+  document.getElementById(inputId).value = '';
+  _orKey = _keys.llama || _keys.deepseek;
   updateAIKeyUI();
-  toast('Key Saved', 'OpenRouter key stored in browser — AI parsing enabled.', 0, 'success');
+  const label = slot === 'llama' ? 'Llama 4 Maverick' : 'DeepSeek V3.2';
+  toast('Key Saved', `${label} key stored in browser.`, 0, 'success');
 }
+
+// Keep old saveORKey in case called anywhere else
+function saveORKey() { saveKey('llama'); }
 
 function updateAIKeyUI() {
-  const st = document.getElementById('ai-key-status');
-  const genBtn = document.getElementById('btn-gen-solutions');
-  if (_orKey) {
-    const masked = _orKey.substring(0,8) + '…' + _orKey.slice(-4);
-    st.textContent = `✓ Key saved: ${masked}`;
-    st.className = 'ai-key-status saved';
-  } else {
-    st.textContent = isOnline
-      ? 'No key saved — paste your OpenRouter key above to enable AI'
-      : 'Offline — AI features require internet';
-    st.className = 'ai-key-status empty';
+  const slots = ['llama', 'deepseek'];
+  slots.forEach(slot => {
+    const st = document.getElementById(`ai-key-status-${slot}`);
+    if (!st) return;
+    const k = _keys[slot];
+    if (k) {
+      st.textContent = `✓ Saved: ${k.substring(0,10)}…${k.slice(-4)}`;
+      st.className = 'ai-key-status saved';
+    } else {
+      st.textContent = 'No key saved';
+      st.className = 'ai-key-status empty';
+    }
+  });
+
+  const anyKey = !!(_keys.llama || _keys.deepseek);
+  const badge = document.getElementById('ai-key-badge-global');
+  if (badge) {
+    badge.textContent = anyKey ? 'READY' : 'CONFIGURE';
+    badge.style.background = anyKey ? 'var(--green-d)' : '';
+    badge.style.borderColor = anyKey ? 'var(--green-b)' : '';
+    badge.style.color = anyKey ? 'var(--green)' : '';
   }
-  if (genBtn) genBtn.disabled = !(_orKey && isOnline);
+  const genBtn = document.getElementById('btn-gen-solutions');
+  if (genBtn) genBtn.disabled = !(anyKey && isOnline);
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -1752,41 +1803,56 @@ async function handlePDFUpload(input) {
 }
 
 // ══════════════════════════════════════════════════════════════
-//  OPENROUTER PARSE  — tries multiple free models in cascade
+//  OPENROUTER CHAT — keyed models first, free fallbacks after
 // ══════════════════════════════════════════════════════════════
-const OR_MODELS = [
+const FREE_MODELS = [
   'meta-llama/llama-3.1-8b-instruct:free',
   'mistralai/mistral-7b-instruct:free',
-  'google/gemma-2-9b-it:free',
-  'nousresearch/hermes-3-llama-3.1-405b:free'
+  'google/gemma-2-9b-it:free'
 ];
 
+function buildModelQueue() {
+  // Priority: saved keyed models → free fallbacks
+  const queue = [];
+  if (_keys.llama)    queue.push({ model: KEY_MODELS.llama,    key: _keys.llama });
+  if (_keys.deepseek) queue.push({ model: KEY_MODELS.deepseek, key: _keys.deepseek });
+  FREE_MODELS.forEach(m => queue.push({ model: m, key: _keys.llama || _keys.deepseek || '' }));
+  return queue;
+}
+
 async function orChat(messages, maxTokens, statusEl) {
-  for (let i = 0; i < OR_MODELS.length; i++) {
-    const model = OR_MODELS[i];
-    if (statusEl) statusEl.textContent = `⟳ Trying model ${i+1}/${OR_MODELS.length}: ${model.split('/')[1]}…`;
+  const queue = buildModelQueue();
+  let lastErr = null;
+  for (let i = 0; i < queue.length; i++) {
+    const { model, key } = queue[i];
+    const shortName = model.split('/')[1] || model;
+    if (statusEl) statusEl.textContent = `⟳ [${i+1}/${queue.length}] ${shortName}…`;
     try {
       const resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${_orKey}`,
+          'Authorization': `Bearer ${key}`,
           'HTTP-Referer': 'https://mubs.ac.ug',
           'X-Title': 'MUBS Exam Grader'
         },
         body: JSON.stringify({ model, max_tokens: maxTokens, messages })
       });
-      if (resp.status === 404 || resp.status === 503) continue; // try next model
+      if (resp.status === 404 || resp.status === 503 || resp.status === 429) {
+        lastErr = new Error(`API ${resp.status} on ${shortName}`);
+        continue;
+      }
       if (!resp.ok) throw new Error(`API ${resp.status}`);
       const data = await resp.json();
       const content = data.choices?.[0]?.message?.content || '';
-      if (!content) continue;
+      if (!content) { lastErr = new Error(`Empty response from ${shortName}`); continue; }
       return { content, model };
     } catch (e) {
-      if (i === OR_MODELS.length - 1) throw e; // last model — rethrow
+      lastErr = e;
+      if (i === queue.length - 1) throw lastErr;
     }
   }
-  throw new Error('All AI models unavailable — check OpenRouter status or try again later');
+  throw lastErr || new Error('All AI models unavailable — try again later');
 }
 
 async function parseExamWithOpenRouter(pdfText, statusEl) {
