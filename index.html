@@ -1614,10 +1614,6 @@ setInterval(async () => {
 let _orKey = '';
 let _keys = { llama: '', deepseek: '' };
 
-const KEY_MODELS = {
-  llama:    'meta-llama/llama-4-maverick',
-  deepseek: 'deepseek/deepseek-chat-v3-5:free'
-};
 
 function loadORKey() {
   try {
@@ -1811,48 +1807,80 @@ const FREE_MODELS = [
   'google/gemma-2-9b-it:free'
 ];
 
+// Verified OpenRouter model slugs (check openrouter.ai/models)
+const KEY_MODEL_IDS = {
+  llama:    'meta-llama/llama-4-maverick:free',  // Llama 4 Maverick — free tier on OR
+  deepseek: 'deepseek/deepseek-chat'             // DeepSeek V3 (latest)
+};
+
 function buildModelQueue() {
-  // Priority: saved keyed models → free fallbacks
   const queue = [];
-  if (_keys.llama)    queue.push({ model: KEY_MODELS.llama,    key: _keys.llama });
-  if (_keys.deepseek) queue.push({ model: KEY_MODELS.deepseek, key: _keys.deepseek });
-  FREE_MODELS.forEach(m => queue.push({ model: m, key: _keys.llama || _keys.deepseek || '' }));
+  const fallbackKey = _keys.llama || _keys.deepseek || '';
+  if (_keys.llama)    queue.push({ model: KEY_MODEL_IDS.llama,    key: _keys.llama,    label: 'Llama 4 Maverick' });
+  if (_keys.deepseek) queue.push({ model: KEY_MODEL_IDS.deepseek, key: _keys.deepseek, label: 'DeepSeek V3' });
+  FREE_MODELS.forEach(m => queue.push({ model: m, key: fallbackKey, label: m.split('/')[1] }));
   return queue;
+}
+
+const OR_TIMEOUT_MS = 30000; // 30 seconds per model attempt
+
+async function orFetch(url, options) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), OR_TIMEOUT_MS);
+  try {
+    return await fetch(url, { ...options, signal: ctrl.signal });
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 async function orChat(messages, maxTokens, statusEl) {
   const queue = buildModelQueue();
   let lastErr = null;
   for (let i = 0; i < queue.length; i++) {
-    const { model, key } = queue[i];
-    const shortName = model.split('/')[1] || model;
-    if (statusEl) statusEl.textContent = `⟳ [${i+1}/${queue.length}] ${shortName}…`;
+    const { model, key, label } = queue[i];
+    if (statusEl) statusEl.textContent = `⟳ [${i+1}/${queue.length}] ${label} — please wait…`;
     try {
-      const resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      const resp = await orFetch('https://openrouter.ai/api/v1/chat/completions', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${key}`,
-          'HTTP-Referer': 'https://mubs.ac.ug',
+          'HTTP-Referer': 'https://festo-wampamba.github.io/Webserver-Auto-Grader/',
           'X-Title': 'MUBS Exam Grader'
         },
         body: JSON.stringify({ model, max_tokens: maxTokens, messages })
       });
-      if (resp.status === 404 || resp.status === 503 || resp.status === 429) {
-        lastErr = new Error(`API ${resp.status} on ${shortName}`);
+      if ([404, 503, 529].includes(resp.status)) {
+        lastErr = new Error(`${label} unavailable (${resp.status}) — trying next…`);
+        if (statusEl) statusEl.textContent = `⚠ ${lastErr.message}`;
+        await new Promise(r => setTimeout(r, 800));
         continue;
       }
-      if (!resp.ok) throw new Error(`API ${resp.status}`);
+      if (resp.status === 429) {
+        lastErr = new Error(`${label} rate-limited — trying next…`);
+        if (statusEl) statusEl.textContent = `⚠ ${lastErr.message}`;
+        await new Promise(r => setTimeout(r, 1500));
+        continue;
+      }
+      if (!resp.ok) {
+        lastErr = new Error(`${label} error ${resp.status}`);
+        continue;
+      }
       const data = await resp.json();
       const content = data.choices?.[0]?.message?.content || '';
-      if (!content) { lastErr = new Error(`Empty response from ${shortName}`); continue; }
-      return { content, model };
+      if (!content) { lastErr = new Error(`Empty response from ${label}`); continue; }
+      if (statusEl) statusEl.textContent = `✓ Got response from ${label}`;
+      return { content, model, label };
     } catch (e) {
-      lastErr = e;
-      if (i === queue.length - 1) throw lastErr;
+      lastErr = e.name === 'AbortError'
+        ? new Error(`${label} timed out after 30s — trying next…`)
+        : e;
+      if (statusEl) statusEl.textContent = `⚠ ${lastErr.message}`;
+      await new Promise(r => setTimeout(r, 500));
     }
   }
-  throw lastErr || new Error('All AI models unavailable — try again later');
+  throw lastErr || new Error('All AI models unavailable — check your API keys or try again later');
 }
 
 async function parseExamWithOpenRouter(pdfText, statusEl) {
