@@ -1107,8 +1107,11 @@ select.form-input { cursor: pointer; }
           <div class="form-group">
             <label class="form-label">Shift</label>
             <select id="s-shift" class="form-input">
-              <option value="1">Shift 1 — 8:00am – 9:30am</option>
-              <option value="2">Shift 2 — 10:00am – 11:30am</option>
+              <option value="One">Shift 1 — 8:00am – 9:30am</option>
+              <option value="Two">Shift 2 — 10:00am – 11:30am</option>
+              <option value="Three">Shift 3 — 12:00pm – 1:30pm</option>
+              <option value="Four">Shift 4 — 2:00pm – 3:30pm</option>
+              <option value="Five">Shift 5 — 4:00pm – 5:30pm</option>
             </select>
           </div>
           <div class="form-group">
@@ -1299,7 +1302,8 @@ select.form-input { cursor: pointer; }
           <div class="ex-row"><span class="ex-row-k">VM / Computer</span><span class="ex-row-v" id="ex-s-vm">—</span></div>
           <div class="ex-row"><span class="ex-row-k">Current Score</span><span class="ex-row-v" id="ex-curr-score" style="color:var(--green)">0 / 30</span></div>
         </div>
-        <button class="btn btn-primary" style="margin-top:4px" onclick="exportResults()">⬇ Export Session Results</button>
+        <button class="btn btn-primary" style="margin-top:4px" onclick="exportResults()">⬇ Download Session Results</button>
+        <button class="btn" style="margin-top:8px;background:var(--bg2);border:1px solid var(--border);color:var(--text);font-size:13px" onclick="emailResults()">✉ Send Results via Email</button>
       </div>
 
       <!-- MARK OVERRIDE -->
@@ -1547,11 +1551,33 @@ const DEFAULT_EXAM = {
 // ══════════════════════════════════════════════════════════════
 let EXAM = JSON.parse(JSON.stringify(DEFAULT_EXAM)); // active exam config
 
-let student = { name:'', regNo:'', shift:'1', vmId:'' };
+let student = { name:'', regNo:'', shift:'One', vmId:'' };
 
+// Dynamic VM state — reset and rebuilt from EXAM at launch
 let vm = {
-  apache: false, running: false, enabled: false,
-  files: {}, ufw80: false, urlAccessed: false, statusChecked: false
+  // generic key-value flags: set by dynamic handlers
+  packages: {},      // pkg -> true/false (installed)
+  services: {},      // svc -> { running, enabled }
+  files:    {},      // path -> content string
+  flags:    {},      // arbitrary boolean flags
+  urlAccessed:   false,
+  statusChecked: false,
+  // legacy aliases for old code paths
+  get apache()  { return !!this.packages['apache2']; },
+  get running() { return !!(this.services['apache2']?.running); },
+  get enabled() { return !!(this.services['apache2']?.enabled); },
+};
+
+// Dynamic VM profile — derived from EXAM at launchSimulator()
+let VM_PROFILE = {
+  packages:    [],   // list of known installable package names (from tasks)
+  services:    [],   // list of manageable service names
+  mainPkg:     '',   // primary package for install task (e.g. "docker.io", "apache2")
+  mainSvc:     '',   // primary service (e.g. "docker", "apache2", "mysql")
+  webRoot:     '/var/www/html',  // for web tasks
+  isWebServer: false,
+  isContainer: false,
+  isDatabase:  false,
 };
 
 // taskStates[id] = 'unattempted' | 'inprogress' | 'completed' | 'failed'
@@ -2416,6 +2442,111 @@ function startStudentSession() {
 }
 
 // ══════════════════════════════════════════════════════════════
+//  SECTION 4b — DYNAMIC VM PROFILE BUILDER
+//  Analyses EXAM.tasks to figure out what this exam is about
+//  so the terminal can simulate the right environment
+// ══════════════════════════════════════════════════════════════
+function buildVMProfile() {
+  // Reset VM state fully on every new exam launch
+  vm.packages  = {};
+  vm.services  = {};
+  vm.files     = {};
+  vm.flags     = {};
+  vm.urlAccessed   = false;
+  vm.statusChecked = false;
+
+  // Reset profile
+  VM_PROFILE = { packages:[], services:[], mainPkg:'', mainSvc:'',
+                 webRoot:'/var/www/html', isWebServer:false, isContainer:false, isDatabase:false };
+
+  // Infer from task labels + descriptions + types
+  const allText = EXAM.tasks.map(t => (t.label + ' ' + t.description).toLowerCase()).join(' ');
+
+  // Detect domain
+  VM_PROFILE.isWebServer = /apache|nginx|httpd|lighttpd|web\s*server/.test(allText);
+  VM_PROFILE.isContainer = /docker|container|podman/.test(allText);
+  VM_PROFILE.isDatabase  = /mysql|mariadb|postgres|mongodb|database|db/.test(allText);
+
+  // Infer main package from install_package task description, then fallback to text scan
+  const installTask = EXAM.tasks.find(t => t.type === 'install_package');
+  if (installTask) {
+    const desc = (installTask.description + ' ' + installTask.label).toLowerCase();
+    if      (/docker/.test(desc))          VM_PROFILE.mainPkg = 'docker.io';
+    else if (/nginx/.test(desc))           VM_PROFILE.mainPkg = 'nginx';
+    else if (/mysql/.test(desc))           VM_PROFILE.mainPkg = 'mysql-server';
+    else if (/mariadb/.test(desc))         VM_PROFILE.mainPkg = 'mariadb-server';
+    else if (/postgres/.test(desc))        VM_PROFILE.mainPkg = 'postgresql';
+    else if (/apache|httpd/.test(desc))    VM_PROFILE.mainPkg = 'apache2';
+    else if (/php/.test(desc))             VM_PROFILE.mainPkg = 'php';
+    else {
+      // Try to extract package name from params or description words
+      const words = desc.split(/\s+/);
+      const pkgWord = words.find(w => /^[\w\.\-]+$/.test(w) && w.length > 3 && !/install|package|using|apt|the|for|and/.test(w));
+      VM_PROFILE.mainPkg = pkgWord || 'apache2';
+    }
+  } else {
+    VM_PROFILE.mainPkg = VM_PROFILE.isContainer ? 'docker.io'
+                       : VM_PROFILE.isDatabase  ? 'mysql-server'
+                       : 'apache2';
+  }
+
+  // Infer main service name from package name
+  const pkgToSvc = {
+    'docker.io': 'docker', 'docker-ce': 'docker', 'docker': 'docker',
+    'nginx': 'nginx', 'apache2': 'apache2', 'httpd': 'httpd',
+    'mysql-server': 'mysql', 'mysql': 'mysql',
+    'mariadb-server': 'mariadb', 'postgresql': 'postgresql',
+    'php': 'php', 'php-fpm': 'php-fpm'
+  };
+  VM_PROFILE.mainSvc = pkgToSvc[VM_PROFILE.mainPkg] || VM_PROFILE.mainPkg.replace(/-server$/,'');
+
+  // Build aliases list — all names the student might type for this package
+  VM_PROFILE.packages = buildPkgAliases(VM_PROFILE.mainPkg);
+  VM_PROFILE.services = buildSvcAliases(VM_PROFILE.mainSvc);
+
+  // For container exams, pre-populate known Docker images from task descriptions
+  if (VM_PROFILE.isContainer) {
+    vm.flags.dockerImages = {}; // imageName -> pulled (bool)
+    vm.flags.containers   = {}; // containerName -> { image, running, env }
+    EXAM.tasks.forEach(t => {
+      const txt = (t.label + ' ' + t.description).toLowerCase();
+      const imgM = txt.match(/\b(mysql|postgres|nginx|ubuntu|redis|mongo|mariadb)(?::[\w\.\-]+)?\b/);
+      if (imgM) vm.flags.dockerImages[imgM[0]] = false;
+    });
+  }
+
+  // For database exams, prepare DB state
+  if (VM_PROFILE.isDatabase) {
+    vm.flags.dbRunning   = false;
+    vm.flags.dbRootPass  = '';
+    vm.flags.databases   = {};   // dbName -> { tables: {} }
+    vm.flags.dbUser      = '';
+  }
+}
+
+function buildPkgAliases(mainPkg) {
+  const base = mainPkg.replace(/-server$/,'').replace(/\.io$/,'');
+  const set  = new Set([mainPkg, base]);
+  if (mainPkg === 'docker.io')      { set.add('docker'); set.add('docker-ce'); set.add('docker-engine'); }
+  if (mainPkg === 'apache2')        { set.add('apache'); set.add('apache2'); }
+  if (mainPkg === 'mysql-server')   { set.add('mysql'); set.add('mysql-server'); set.add('mysql-server-8.0'); }
+  if (mainPkg === 'mariadb-server') { set.add('mariadb'); set.add('mariadb-server'); }
+  if (mainPkg === 'nginx')          { set.add('nginx'); set.add('nginx-full'); }
+  return [...set];
+}
+
+function buildSvcAliases(mainSvc) {
+  const set = new Set([mainSvc]);
+  if (mainSvc === 'docker') { set.add('docker.io'); set.add('docker-ce'); }
+  if (mainSvc === 'apache2'){ set.add('apache'); set.add('httpd'); }
+  if (mainSvc === 'mysql')  { set.add('mysql'); set.add('mysqld'); }
+  return [...set];
+}
+
+function isKnownPkg(pkg)  { return VM_PROFILE.packages.includes(pkg.toLowerCase()); }
+function isKnownSvc(svc)  { return VM_PROFILE.services.includes(svc.toLowerCase()); }
+
+// ══════════════════════════════════════════════════════════════
 //  SECTION 5 — SIMULATOR LAUNCH
 // ══════════════════════════════════════════════════════════════
 function launchSimulator() {
@@ -2439,6 +2570,9 @@ function launchSimulator() {
   document.getElementById('ex-s-reg').textContent   = student.regNo;
   document.getElementById('ex-s-shift').textContent = 'Shift ' + student.shift;
   document.getElementById('ex-s-vm').textContent    = student.vmId || '—';
+
+  // Build dynamic VM profile from exam tasks
+  buildVMProfile();
 
   // Init state
   taskStates = {};
@@ -2507,13 +2641,42 @@ function renderTimer() {
 //  Awards marks, updates task states, cascades subtasks
 // ══════════════════════════════════════════════════════════════
 function evaluateAllTasks() {
-  EXAM.tasks.forEach(task => {
-    if (taskStates[task.id] === 'completed') return; // already done
-    const handler = TASK_TYPES[task.type];
-    if (!handler) return;
+  const svc = VM_PROFILE.mainSvc;
+  const svcSt = vm.services[svc] || {};
 
-    const done = handler.completedCheck(vm);
-    const inProg = !done && handler.inProgressCheck(vm);
+  EXAM.tasks.forEach(task => {
+    if (taskStates[task.id] === 'completed') return;
+
+    let done = false, inProg = false;
+    const type = task.type;
+
+    if (type === 'install_package') {
+      done = !!vm.packages[VM_PROFILE.mainPkg];
+    } else if (type === 'start_service') {
+      done = !!svcSt.running;
+    } else if (type === 'enable_service') {
+      done = !!svcSt.enabled;
+    } else if (type === 'start_and_enable') {
+      done   = !!(svcSt.running && svcSt.enabled);
+      inProg = !!(svcSt.running || svcSt.enabled) && !done;
+    } else if (type === 'create_file') {
+      const p = VM_PROFILE.webRoot + '/index.html';
+      const c = vm.files[p] || '';
+      done   = c.length >= 50;
+      inProg = c.length > 0 && !done;
+    } else if (type === 'verify_content') {
+      const c = vm.files[VM_PROFILE.webRoot+'/index.html'] || '';
+      done = hasName(c) && hasReg(c);
+      inProg = !done && (hasName(c) || hasReg(c));
+    } else if (type === 'access_url') {
+      done = vm.urlAccessed;
+      inProg = !done && !!(svcSt.running);
+    } else if (type === 'check_status') {
+      done = vm.statusChecked;
+    } else if (type === 'custom') {
+      // custom tasks: award marks when relevant flags are set
+      done = !!vm.flags['custom_' + task.id];
+    }
 
     if (done && taskStates[task.id] !== 'completed') {
       completeTask(task);
@@ -2550,50 +2713,25 @@ function failTask(task, reason) {
 }
 
 function getCompletionMsg(type) {
+  const svc = VM_PROFILE.mainSvc || 'service';
+  const pkg = VM_PROFILE.mainPkg || 'package';
   const msgs = {
-    install_package:  'Package installed successfully.',
-    start_and_enable: 'Service started and enabled on boot.',
-    start_service:    'Service is now running.',
-    enable_service:   'Service will auto-start on boot.',
-    create_file:      'Valid HTML file created at /var/www/html/index.html',
-    verify_content:   'Name and registration number detected on your page.',
-    access_url:       'Webpage successfully accessed via localhost.',
-    check_status:     'Apache status confirmed as active/running.'
+    install_package:  `${pkg} installed successfully.`,
+    start_and_enable: `${svc} started and enabled on boot.`,
+    start_service:    `${svc} is now running.`,
+    enable_service:   `${svc} will auto-start on boot.`,
+    create_file:      `File created at ${VM_PROFILE.webRoot}/index.html`,
+    verify_content:   'Name and registration number detected.',
+    access_url:       'Service accessed successfully via localhost.',
+    check_status:     `${svc} status confirmed as active/running.`,
+    custom:           'Task completed.'
   };
   return msgs[type] || 'Task completed.';
 }
 
-// Special: task 2 (start_and_enable) — award sub-marks
-function handleServiceSubTask(action) {
-  const t2 = EXAM.tasks.find(t => t.id === 't2' || t.type === 'start_and_enable');
-  if (!t2) return;
-  if (taskStates[t2.id] === 'completed') return;
-
-  if (action === 'start' && !notified.has('t2a')) {
-    notified.add('t2a');
-    marks[t2.id] = (marks[t2.id] || 0) + 1.5;
-    taskStates[t2.id] = vm.enabled ? 'completed' : 'inprogress';
-    toast('▶ Apache Started!', 'Service is running. Enable it to earn remaining marks.', 1.5, 'prog', 100);
-    renderTaskPanel(); updateScore();
-  }
-  if (action === 'enable' && !notified.has('t2b')) {
-    notified.add('t2b');
-    marks[t2.id] = (marks[t2.id] || 0) + 1.5;
-    taskStates[t2.id] = vm.running ? 'completed' : 'inprogress';
-    toast('🔁 Apache Enabled!', 'Will auto-start on boot. Start it to earn remaining marks.', 1.5, 'prog', 100);
-    if (vm.running && vm.enabled && !notified.has('t2-done')) {
-      notified.add('t2-done');
-      taskStates[t2.id] = 'completed';
-      marks[t2.id] = t2.marks; // ensure full marks
-      toast('✅ Service Configured!', 'Apache is both running and enabled on boot.', 0, 'success', 400);
-    }
-    renderTaskPanel(); updateScore();
-  }
-}
-
 // Homepage processing (tasks 3 + 4)
 function processHomepage(content) {
-  vm.files['/var/www/html/index.html'] = content;
+  vm.files[VM_PROFILE.webRoot + '/index.html'] = content;
 
   // Task 3: create_file (10 marks)
   const t3 = EXAM.tasks.find(t => t.type === 'create_file');
@@ -2713,20 +2851,38 @@ function updateScore() {
 }
 
 function updateStatusBar() {
-  const setDot = (id, ok) => {
-    document.getElementById(id).className = 'sb-dot' + (ok ? ' ok' : '');
-  };
-  const setText = (id, txt) => document.getElementById(id).textContent = txt;
+  const setDot  = (id, ok)  => { const el=document.getElementById(id); if(el) el.className='sb-dot'+(ok?' ok':''); };
+  const setText = (id, txt) => { const el=document.getElementById(id); if(el) el.textContent=txt; };
 
-  setDot('sb-apache-dot',  vm.apache);
-  setText('sb-apache-label', vm.apache ? 'Apache: Installed' : 'Apache: Not Installed');
+  const pkg    = VM_PROFILE.mainPkg || 'apache2';
+  const svc    = VM_PROFILE.mainSvc || 'apache2';
+  const pkgOk  = !!vm.packages[pkg];
+  const svcSt  = vm.services[svc] || {};
+  const svcOk  = !!svcSt.running;
+  const svcEn  = !!svcSt.enabled;
 
-  setDot('sb-service-dot', vm.running);
-  setText('sb-service-label', vm.running ? (vm.enabled ? 'Service: Running+Enabled' : 'Service: Running') : 'Service: Stopped');
+  setDot('sb-apache-dot',  pkgOk);
+  setText('sb-apache-label', pkgOk ? `${pkg}: Installed` : `${pkg}: Not Installed`);
 
-  const hasFile = !!vm.files['/var/www/html/index.html'];
-  setDot('sb-file-dot', hasFile);
-  setText('sb-file-label', hasFile ? 'index.html: Created' : 'index.html: None');
+  setDot('sb-service-dot', svcOk);
+  setText('sb-service-label', svcOk ? `${svc}: ${svcEn?'Running+Enabled':'Running'}` : `${svc}: Stopped`);
+
+  // Show main file or container/db state
+  if (VM_PROFILE.isContainer) {
+    const imgs   = vm.flags.dockerImages || {};
+    const pulled = Object.values(imgs).filter(Boolean).length;
+    const total  = Object.keys(imgs).length;
+    setDot('sb-file-dot', pulled > 0);
+    setText('sb-file-label', `Images: ${pulled}/${total} pulled`);
+  } else if (VM_PROFILE.isDatabase) {
+    const dbs  = Object.keys(vm.flags.databases||{}).length;
+    setDot('sb-file-dot', vm.flags.dbRunning);
+    setText('sb-file-label', `DB: ${vm.flags.dbRunning?'Running':'Stopped'} | Databases: ${dbs}`);
+  } else {
+    const webFile = vm.files[VM_PROFILE.webRoot+'/index.html'];
+    setDot('sb-file-dot', !!webFile);
+    setText('sb-file-label', webFile ? 'index.html: Created' : 'index.html: None');
+  }
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -2764,17 +2920,16 @@ function printBanner() {
 }
 
 // ══════════════════════════════════════════════════════════════
-//  SECTION 10 — COMMAND PROCESSOR
+//  SECTION 10 — COMMAND PROCESSOR (Dynamic, outcome-based)
 // ══════════════════════════════════════════════════════════════
 function runCmd(raw) {
   const trimmed = raw.trim();
   if (!trimmed) return;
 
-  // Echo the typed command in terminal
   const promptUser = (student.name.split(' ')[0] || 'student').toLowerCase();
   tPrint(`${promptUser}@mubs-vm:~$ ${trimmed}`, 'tc-prompt');
 
-  // Tokenise (handle quoted strings)
+  // Tokenise
   const tokens = [];
   const re = /[^\s"']+|"([^"]*)"|'([^']*)'/g;
   let m;
@@ -2784,159 +2939,304 @@ function runCmd(raw) {
   let idx = 0;
   if (tokens[idx] === 'sudo') idx++;
   const base = (tokens[idx] || '').toLowerCase();
-  const args = tokens.slice(idx + 1);
+  const args  = tokens.slice(idx + 1);
 
-  // ── APT / APT-GET ──
-  if (base === 'apt' || base === 'apt-get') {
-    const sub = (args[0] || '').toLowerCase();
-    if (sub === 'update') {
+  const mainPkg = VM_PROFILE.mainPkg || 'apache2';
+  const mainSvc = VM_PROFILE.mainSvc || 'apache2';
+
+  // ── CLEAR ──
+  if (base === 'clear' || base === 'cls') {
+    document.getElementById('term-output').innerHTML = '';
+    return;
+  }
+
+  // ── APT / APT-GET / DPKG ──
+  if (base === 'apt' || base === 'apt-get' || base === 'dpkg') {
+    const sub = base === 'dpkg' ? (args[0]||'') : (args[0]||'').toLowerCase();
+
+    if (sub === 'update' || sub === '-y' && args[1] === 'update') {
       tPrint('Hit:1 http://archive.ubuntu.com/ubuntu jammy InRelease', 'tc-dim');
       tPrint('Hit:2 http://security.ubuntu.com/ubuntu jammy-security InRelease', 'tc-dim');
       tPrint('Reading package lists... Done', 'tc-default');
       return;
     }
-    if (sub === 'install') {
-      const pkg = (args[1] || '').toLowerCase().replace('-y','').trim();
-      if (pkg === 'apache2' || pkg === 'apache') {
-        if (vm.apache) { tPrint('apache2 is already the newest version (2.4.54-2ubuntu1.13).', 'tc-dim'); return; }
+    if (sub === 'install' || (base==='dpkg' && (sub==='-i'||sub==='--install'))) {
+      // strip flags like -y
+      const pkgArg = args.filter(a=>!a.startsWith('-'))[1] || args.filter(a=>!a.startsWith('-'))[0] || '';
+      const pkg = pkgArg.toLowerCase().trim();
+      if (!pkg) { tPrint('E: No package name specified', 'tc-error'); return; }
+
+      if (isKnownPkg(pkg)) {
+        if (vm.packages[mainPkg]) {
+          tPrint(`${mainPkg} is already the newest version.`, 'tc-dim'); return;
+        }
+        // Simulate install output based on package type
         tPrint('Reading package lists... Done', 'tc-dim');
         tPrint('Building dependency tree... Done', 'tc-dim');
         tPrint('The following NEW packages will be installed:', 'tc-default');
-        tPrint('  apache2 apache2-bin apache2-data apache2-utils libapache2-mod-php', 'tc-default');
-        tPrint('0 upgraded, 5 newly installed. Need to get 1,847 kB of archives.', 'tc-dim');
-        tPrint('Get:1 http://archive.ubuntu.com/ubuntu apache2 2.4.54 [95.5 kB]', 'tc-dim');
-        tPrint('Fetched 1,847 kB in 2s (923 kB/s)', 'tc-dim');
-        tPrint('Setting up apache2 (2.4.54-2ubuntu1.13) ...', 'tc-dim');
-        tPrint('Enabling module mpm_event. To activate run: service apache2 --full-restart', 'tc-dim');
-        tPrint('Created symlink /etc/systemd/system/multi-user.target.wants/apache2.service', 'tc-dim');
+        tPrint(`  ${mainPkg}`, 'tc-default');
+        tPrint('0 upgraded, 1 newly installed.', 'tc-dim');
+        tPrint(`Fetched in 3s`, 'tc-dim');
+        tPrint(`Setting up ${mainPkg} ...`, 'tc-dim');
+        if (VM_PROFILE.isContainer) {
+          tPrint('Created symlink for docker.service', 'tc-dim');
+          tPrint('Docker is installed. Use "sudo docker run" to start containers.', 'tc-dim');
+        } else if (VM_PROFILE.isWebServer) {
+          tPrint('Enabling module mpm_event.', 'tc-dim');
+          tPrint(`Created symlink /etc/systemd/system/multi-user.target.wants/${mainSvc}.service`, 'tc-dim');
+        }
         tBlank();
-        tPrint('✓ apache2 successfully installed.', 'tc-success');
-        vm.apache = true;
-        const t1 = EXAM.tasks.find(t => t.type === 'install_package');
-        if (t1) completeTask(t1);
+        tPrint(`✓ ${mainPkg} successfully installed.`, 'tc-success');
+        vm.packages[mainPkg] = true;
+        // Also mark aliases as installed
+        VM_PROFILE.packages.forEach(p => { vm.packages[p] = true; });
+        if (!vm.services[mainSvc]) vm.services[mainSvc] = { running:false, enabled:false };
+        evaluateAllTasks();
         return;
       }
-      // Wrong package
-      if (pkg && pkg !== '') {
-        tPrint(`E: Unable to locate package ${pkg}`, 'tc-error');
-        tPrint(`💡 Hint: did you mean 'apache2'?`, 'tc-dim');
-        const t1 = EXAM.tasks.find(t => t.type === 'install_package');
-        if (t1 && taskStates[t1.id] === 'unattempted') failTask(t1, `Wrong package: '${pkg}'. Install apache2.`);
-      } else {
-        tPrint('E: No package name specified', 'tc-error');
-      }
+      // Unknown package
+      tPrint(`E: Unable to locate package ${pkg}`, 'tc-error');
+      tPrint(`💡 Hint: The exam requires installing '${mainPkg}'. Check spelling.`, 'tc-dim');
       return;
     }
-    tPrint(`apt: '${sub}' is not recognized. Try: apt update, apt install apache2`, 'tc-error');
+    if (sub === '-l' || sub === '--list') {
+      if (vm.packages[mainPkg]) tPrint(`ii  ${mainPkg}  (installed)`, 'tc-default');
+      else tPrint(`(no packages matching — ${mainPkg} not installed)`, 'tc-dim');
+      return;
+    }
+    tPrint(`apt: '${sub}' not recognized. Try: apt update, apt install ${mainPkg}`, 'tc-error');
+    return;
+  }
+
+  // ── CURL install (Docker alternative: curl -fsSL ... | sh) ──
+  if (base === 'curl' || base === 'wget') {
+    const isPipe = /\|\s*(sudo\s+)?(bash|sh)/.test(trimmed);
+    const isDockerInstall = /get\.docker\.com|docker\.io|install\.sh/.test(trimmed);
+    if (isPipe && isDockerInstall && VM_PROFILE.isContainer) {
+      tPrint('% Total    % Received  Transfered ...', 'tc-dim');
+      tPrint('Installing Docker via script...', 'tc-dim');
+      tPrint('✓ Docker installed successfully.', 'tc-success');
+      vm.packages[mainPkg] = true;
+      VM_PROFILE.packages.forEach(p => { vm.packages[p] = true; });
+      if (!vm.services[mainSvc]) vm.services[mainSvc] = { running:false, enabled:false };
+      evaluateAllTasks();
+      return;
+    }
+    // URL access check for web tasks
+    const url = args.find(a => !a.startsWith('-')) || '';
+    const isLocal = !url || /^https?:\/\/(localhost|127\.0\.0\.1)(\/.*)?$/.test(url) || url === 'localhost' || url === '127.0.0.1';
+    if (!isLocal && !isPipe) { tPrint(`${base}: Only localhost/127.0.0.1 accessible in this VM`, 'tc-warn'); return; }
+    if (url && isLocal) {
+      const svcSt = vm.services[mainSvc] || {};
+      if (!vm.packages[mainPkg]) { tPrint(`${base}: (7) Failed to connect to localhost: Connection refused`, 'tc-error'); return; }
+      if (!svcSt.running) { tPrint(`${base}: (7) Failed to connect to localhost port 80: Connection refused\n       Try: sudo systemctl start ${mainSvc}`, 'tc-error'); return; }
+      const page = vm.files[VM_PROFILE.webRoot + '/index.html'];
+      tPrint(`HTTP/1.1 200 OK  Server: ${mainSvc}/Ubuntu`, 'tc-dim');
+      if (page) tPrint(page.substring(0,300) + (page.length>300?'\n...(truncated)':''), 'tc-default');
+      else      tPrint(`<html><body><h1>${mainPkg} Default Page</h1><p>It works!</p></body></html>`, 'tc-dim');
+      tBlank();
+      vm.urlAccessed = true;
+      evaluateAllTasks();
+    }
     return;
   }
 
   // ── SYSTEMCTL / SERVICE ──
   if (base === 'systemctl' || base === 'service') {
-    let action, service;
+    let action, svcName;
     if (base === 'systemctl') {
-      action  = (args[0] || '').toLowerCase();
-      service = (args[1] || '').toLowerCase().replace('.service','');
+      action  = (args[0]||'').toLowerCase();
+      svcName = (args[1]||'').toLowerCase().replace('.service','');
     } else {
-      service = (args[0] || '').toLowerCase();
-      action  = (args[1] || '').toLowerCase();
+      svcName = (args[0]||'').toLowerCase();
+      action  = (args[1]||'').toLowerCase();
     }
+    if (!svcName) { tPrint('Usage: systemctl start|stop|enable|disable|status <service>', 'tc-dim'); return; }
 
-    if (service !== 'apache2' && service !== 'apache') {
-      tPrint(`Failed to ${action} ${service}.service: Unit ${service}.service not found.`, 'tc-error'); return;
+    const known = isKnownSvc(svcName);
+    if (!known) {
+      // Could be a Docker container managed via service — just acknowledge
+      tPrint(`Failed to ${action} ${svcName}.service: Unit ${svcName}.service not found.`, 'tc-error'); return;
     }
-    if (!vm.apache) {
-      tPrint('apache2: unrecognized service — install apache2 first.', 'tc-error');
-      const t1 = EXAM.tasks.find(t => t.type === 'install_package');
-      if (t1 && taskStates[t1.id] === 'unattempted') failTask(t1, 'Must install apache2 before managing its service.');
-      return;
+    if (!vm.packages[mainPkg]) {
+      tPrint(`${svcName}: not found — install ${mainPkg} first.`, 'tc-error'); return;
     }
+    if (!vm.services[mainSvc]) vm.services[mainSvc] = { running:false, enabled:false };
+    const st = vm.services[mainSvc];
+
     if (action === 'start' || action === 'restart') {
-      vm.running = true;
-      tPrint(`● apache2.service - The Apache HTTP Server`, 'tc-success');
-      tPrint(`   ${action === 'restart' ? 'Restarted' : 'Started'} successfully.`, 'tc-success');
-      handleServiceSubTask('start');
-      return;
-    }
-    if (action === 'stop') {
-      vm.running = false;
-      tPrint('Stopped apache2.service.', 'tc-default'); return;
-    }
-    if (action === 'enable') {
-      vm.enabled = true;
-      tPrint('Created symlink /etc/systemd/system/multi-user.target.wants/apache2.service', 'tc-success');
-      tPrint('→ /lib/systemd/system/apache2.service.', 'tc-success');
-      handleServiceSubTask('enable');
-      return;
-    }
-    if (action === 'disable') {
-      vm.enabled = false;
-      tPrint('Removed /etc/systemd/system/multi-user.target.wants/apache2.service.', 'tc-default'); return;
-    }
-    if (action === 'status') {
-      if (!vm.running) {
-        tPrint('● apache2.service - The Apache HTTP Server', 'tc-default');
-        tPrint(`     Loaded: loaded (/lib/systemd/system/apache2.service; ${vm.enabled?'enabled':'disabled'})`, 'tc-dim');
+      st.running = true;
+      tPrint(`● ${svcName}.service`, 'tc-success');
+      tPrint(`   ${action==='restart'?'Restarted':'Started'} ${svcName}.service.`, 'tc-success');
+      if (VM_PROFILE.isContainer) vm.flags.dbRunning = true;
+    } else if (action === 'stop') {
+      st.running = false;
+      tPrint(`Stopped ${svcName}.service.`, 'tc-default');
+      if (VM_PROFILE.isContainer) vm.flags.dbRunning = false;
+    } else if (action === 'enable') {
+      st.enabled = true;
+      tPrint(`Created symlink /etc/systemd/system/multi-user.target.wants/${svcName}.service`, 'tc-success');
+    } else if (action === 'disable') {
+      st.enabled = false;
+      tPrint(`Removed /etc/systemd/system/multi-user.target.wants/${svcName}.service.`, 'tc-default');
+    } else if (action === 'status' || action === 'is-active') {
+      if (!st.running) {
+        tPrint(`● ${svcName}.service`, 'tc-default');
+        tPrint(`     Loaded: loaded (/lib/systemd/system/${svcName}.service; ${st.enabled?'enabled':'disabled'})`, 'tc-dim');
         tPrint('     Active: inactive (dead)', 'tc-error');
       } else {
-        tPrint('● apache2.service - The Apache HTTP Server', 'tc-success');
-        tPrint(`     Loaded: loaded (/lib/systemd/system/apache2.service; ${vm.enabled?'enabled':'disabled'})`, 'tc-dim');
+        tPrint(`● ${svcName}.service`, 'tc-success');
+        tPrint(`     Loaded: loaded (/lib/systemd/system/${svcName}.service; ${st.enabled?'enabled':'disabled'})`, 'tc-dim');
         tPrint(`     Active: active (running) since ${new Date().toUTCString()}`, 'tc-success');
-        tPrint('    Process: 1337 ExecStart=/usr/sbin/apachectl start (code=exited, status=0/SUCCESS)', 'tc-dim');
-        tPrint('   Main PID: 1340 (apache2)', 'tc-dim');
-        tPrint('     CGroup: /system.slice/apache2.service', 'tc-dim');
-        tPrint('             └─1340 /usr/sbin/apache2 -k start', 'tc-dim');
-        tBlank();
+        tPrint(`    Main PID: ${1337+Math.floor(Math.random()*100)} (${svcName})`, 'tc-dim');
         vm.statusChecked = true;
-        const t6 = EXAM.tasks.find(t => t.type === 'check_status');
-        if (t6 && taskStates[t6.id] !== 'completed') completeTask(t6);
+      }
+    } else {
+      tPrint(`Unknown action '${action}'. Try: start, stop, enable, disable, status`, 'tc-error');
+    }
+    evaluateAllTasks();
+    return;
+  }
+
+  // ── DOCKER commands ──
+  if (base === 'docker') {
+    if (!vm.packages[mainPkg] && !vm.packages['docker'] && !vm.packages['docker.io']) {
+      tPrint('docker: command not found — install Docker first', 'tc-error'); return;
+    }
+    const sub = (args[0]||'').toLowerCase();
+    const rest = args.slice(1);
+
+    if (sub === 'pull') {
+      const img = rest[0] || '';
+      if (!img) { tPrint('Usage: docker pull <image>', 'tc-error'); return; }
+      tPrint(`Pulling from library/${img}`, 'tc-dim');
+      tPrint('latest: Pulling from library/' + img, 'tc-dim');
+      tPrint('Status: Downloaded newer image for ' + img + ':latest', 'tc-success');
+      vm.flags.dockerImages = vm.flags.dockerImages || {};
+      vm.flags.dockerImages[img] = true;
+      vm.flags.dockerImages[img+':latest'] = true;
+      // Award pull task
+      const pullTask = EXAM.tasks.find(t => t.type === 'custom' && /pull/.test((t.description||t.label).toLowerCase()));
+      if (pullTask && taskStates[pullTask.id] !== 'completed') {
+        vm.flags['custom_'+pullTask.id] = true;
+        completeTask(pullTask);
+      }
+      evaluateAllTasks();
+      return;
+    }
+    if (sub === 'run') {
+      const imgArg = rest.find(a => !a.startsWith('-') && !a.includes('=') && a !== '--name' && a !== '-e' && a !== '-p' && a !== '-d' && a !== '--rm');
+      const nameM  = trimmed.match(/--name\s+(\S+)/);
+      const cname  = nameM ? nameM[1] : (imgArg || 'container1');
+      const detach = rest.includes('-d');
+      tPrint(`${detach ? cname : ''}`, 'tc-success');
+      tPrint(`Container '${cname}' started.`, 'tc-success');
+      vm.flags.containers = vm.flags.containers || {};
+      vm.flags.containers[cname] = { image: imgArg, running: true };
+      vm.flags.dbRunning = true;
+      // Award run/create container task
+      const runTask = EXAM.tasks.find(t => t.type === 'custom' && /run|creat|contai/.test((t.description||t.label).toLowerCase()) && taskStates[t.id] !== 'completed');
+      if (runTask) { vm.flags['custom_'+runTask.id] = true; completeTask(runTask); }
+      evaluateAllTasks();
+      return;
+    }
+    if (sub === 'ps') {
+      const ctrs = vm.flags.containers || {};
+      if (Object.keys(ctrs).length === 0) {
+        tPrint('CONTAINER ID   IMAGE   COMMAND   STATUS', 'tc-dim');
+        tPrint('(no containers running)', 'tc-dim');
+      } else {
+        tPrint('CONTAINER ID   IMAGE            STATUS', 'tc-dim');
+        Object.entries(ctrs).forEach(([name, c]) => {
+          tPrint(`  ${name.padEnd(16)} ${(c.image||'?').padEnd(16)} Up`, 'tc-default');
+        });
+        vm.statusChecked = true;
+        evaluateAllTasks();
       }
       return;
     }
-    tPrint(`Unknown action '${action}' for apache2.`, 'tc-error'); return;
+    if (sub === 'images') {
+      const imgs = vm.flags.dockerImages || {};
+      tPrint('REPOSITORY   TAG      IMAGE ID      SIZE', 'tc-dim');
+      Object.keys(imgs).filter(k=>!k.includes(':')).forEach(img => {
+        tPrint(`  ${img.padEnd(13)} latest   abc123def    200MB`, 'tc-default');
+      });
+      return;
+    }
+    if (sub === 'exec') {
+      // docker exec -it <cname> <cmd>
+      const execCmd = rest.slice(2).join(' ');
+      tPrint(`[Container shell: ${execCmd}]`, 'tc-dim');
+      handleDockerExec(rest[1]||'', execCmd);
+      return;
+    }
+    if (sub === '--version' || sub === 'version') {
+      tPrint('Docker version 24.0.5, build ced0996', 'tc-default'); return;
+    }
+    tPrint(`docker: '${sub}' is not a docker command.`, 'tc-error'); return;
   }
 
-  // ── NANO / VIM / VI ──
-  if (base === 'nano' || base === 'vim' || base === 'vi' || base === 'gedit') {
+  // ── MYSQL client ──
+  if (base === 'mysql' || base === 'mysqladmin') {
+    const svcSt = vm.services[mainSvc] || {};
+    if (!svcSt.running && !vm.flags.dbRunning) {
+      tPrint('ERROR 2002 (HY000): Can\'t connect to MySQL server — start mysql first.', 'tc-error'); return;
+    }
+    if (base === 'mysqladmin') {
+      const sub = (args.find(a=>!a.startsWith('-'))||'').toLowerCase();
+      if (sub === 'password' || trimmed.includes('-p') || trimmed.includes('password')) {
+        const pass = args.find(a=>!a.startsWith('-') && a !== sub) || '';
+        vm.flags.dbRootPass = pass || 'set';
+        tPrint('mysqladmin: [Warning] Using a password on the command line interface can be insecure.', 'tc-warn');
+        tPrint('Password updated successfully.', 'tc-success');
+        // Award set-password task
+        const passTask = EXAM.tasks.find(t => t.type==='custom' && /password|pass|root/.test((t.description||t.label).toLowerCase()) && taskStates[t.id]!=='completed');
+        if (passTask) { vm.flags['custom_'+passTask.id]=true; completeTask(passTask); }
+        evaluateAllTasks(); return;
+      }
+      if (sub === 'status') { tPrint('Uptime: 120  Threads: 1  Questions: 5  Slow queries: 0', 'tc-default'); return; }
+      return;
+    }
+    // mysql interactive / query
+    tPrint('Welcome to the MySQL monitor. Type \'help;\' for help. Type \'\\q\' to quit.', 'tc-dim');
+    tPrint('mysql>', 'tc-prompt');
+    // Any mysql invocation counts as status checked
+    vm.statusChecked = true;
+    evaluateAllTasks();
+    return;
+  }
+
+  // ── NANO / VIM / VI / TOUCH ──
+  if (base === 'nano' || base === 'vim' || base === 'vi' || base === 'gedit' || base === 'touch') {
     const fp = args[0];
     if (!fp) { tPrint(`${base}: missing filename`, 'tc-error'); return; }
-    if (!vm.apache && fp.startsWith('/var/www')) {
-      tPrint('Error: /var/www/html does not exist. Install apache2 first.', 'tc-error'); return;
+    if (base === 'touch') {
+      vm.files[fp] = vm.files[fp] || '';
+      tPrint(``, 'tc-dim'); // touch gives no output on success
+      return;
     }
     openNano(fp); return;
   }
 
   // ── ECHO with redirection ──
   if (base === 'echo') {
-    const redir  = trimmed.match(/echo\s+(?:-e\s+)?(['"])([\s\S]*?)\1\s*(?:>>?)\s*(\S+)/i)
-                || trimmed.match(/echo\s+(?:-e\s+)?([\s\S]+?)\s*(?:>>?)\s*(\S+)$/i);
-    const teeM   = trimmed.match(/echo\s+(?:-e\s+)?(['"])([\s\S]*?)\1\s*\|\s*(?:sudo\s+)?tee\s+(\S+)/i);
+    const redir = trimmed.match(/echo\s+(?:-e\s+)?(['"])([\s\S]*?)\1\s*(?:>>?)\s*(\S+)/i)
+               || trimmed.match(/echo\s+(?:-e\s+)?([\s\S]+?)\s*(?:>>?)\s*(\S+)$/i);
+    const teeM  = trimmed.match(/echo\s+(?:-e\s+)?(['"])([\s\S]*?)\1\s*\|\s*(?:sudo\s+)?tee\s+(\S+)/i);
     let content = null, target = null;
-
     if (redir) {
       content = redir[2] !== undefined ? redir[2] : redir[1];
       target  = redir[3] !== undefined ? redir[3] : redir[2];
       content = content.replace(/\\n/g, '\n');
-    } else if (teeM) {
-      content = teeM[2]; target = teeM[3];
-      tPrint(content, 'tc-dim');
-    }
-
+    } else if (teeM) { content = teeM[2]; target = teeM[3]; tPrint(content, 'tc-dim'); }
     if (content !== null && target !== null) {
-      if (!vm.apache && target.startsWith('/var/www')) {
-        tPrint('bash: /var/www/html: No such file or directory — install apache2 first.', 'tc-error'); return;
-      }
       vm.files[target] = content;
       tPrint(`Written to ${target}`, 'tc-dim');
-      const norm = target.replace(/\/+$/, '');
-      if (norm === '/var/www/html/index.html' || norm === '/var/www/html/index.htm')
-        processHomepage(content);
+      handleFileWrite(target, content);
       return;
     }
-
-    // plain echo
     const plainM = trimmed.match(/^(?:sudo\s+)?echo\s+(?:-e\s+)?(?:['"]?([\s\S]*?)['"]?\s*$)/i);
-    tPrint(plainM ? plainM[1].replace(/\\n/g, '\n') : '', 'tc-default');
+    tPrint(plainM ? plainM[1].replace(/\\n/g,'\n') : '', 'tc-default');
     return;
   }
 
@@ -2944,107 +3244,84 @@ function runCmd(raw) {
   if (base === 'cat') {
     const wM = trimmed.match(/cat\s*>>?\s*(\S+)/) || trimmed.match(/cat\s+>\s*(\S+)/);
     if (wM) {
-      if (!vm.apache && wM[1].startsWith('/var/www')) {
-        tPrint('bash: /var/www/html: No such file or directory', 'tc-error'); return;
-      }
       catMode = true; catBuf = []; catPath = wM[1];
-      tPrint('> (Enter your content. Type  EOF  on a new line or press Ctrl+D to save)', 'tc-info');
+      tPrint('> (Enter content. Type EOF on a new line or Ctrl+D to save)', 'tc-info');
       return;
     }
     const rM = trimmed.match(/cat\s+(\S+)/);
     if (rM) {
       const c = vm.files[rM[1]];
-      if (c) tPrint(c, 'tc-default');
-      else   tPrint(`cat: ${rM[1]}: No such file or directory`, 'tc-error');
+      if (c !== undefined) tPrint(c || '(empty file)', 'tc-default');
+      else tPrint(`cat: ${rM[1]}: No such file or directory`, 'tc-error');
       return;
     }
     tPrint('(cat: reading stdin — type Ctrl+D to end)', 'tc-dim'); return;
   }
 
-  // ── CURL / WGET ──
-  if (base === 'curl' || base === 'wget') {
-    const url = args.find(a => !a.startsWith('-')) || '';
-    if (!url) { tPrint(`${base}: URL required`, 'tc-error'); return; }
-    const isLocal = /^https?:\/\/(localhost|127\.0\.0\.1)(\/.*)?$/.test(url) || url === 'localhost' || url === '127.0.0.1';
-    if (!isLocal) { tPrint(`${base}: Only localhost/127.0.0.1 accessible in this VM`, 'tc-warn'); return; }
-    if (!vm.apache) { tPrint(`${base}: (7) Failed to connect to localhost port 80: Connection refused`, 'tc-error'); return; }
-    if (!vm.running) { tPrint(`${base}: (7) Failed to connect to localhost port 80: Connection refused\n       (Is apache2 running? Try: sudo systemctl start apache2)`, 'tc-error'); return; }
-    const page = vm.files['/var/www/html/index.html'];
-    tPrint(`HTTP/1.1 200 OK  Server: Apache/2.4.54 (Ubuntu)`, 'tc-dim');
-    if (page) tPrint(page.substring(0, 300) + (page.length > 300 ? '\n...(truncated)' : ''), 'tc-default');
-    else      tPrint('<html><body><h1>Apache2 Ubuntu Default Page</h1><p>It works!</p></body></html>', 'tc-dim');
-    tBlank();
-    vm.urlAccessed = true;
-    const t5 = EXAM.tasks.find(t => t.type === 'access_url');
-    if (t5 && taskStates[t5.id] !== 'completed') completeTask(t5);
-    return;
-  }
-
   // ── LS ──
   if (base === 'ls') {
-    const path = args[0] || '.';
-    if (path === '/var/www/html' || path === '/var/www/html/') {
-      if (!vm.apache) { tPrint(`ls: cannot access '/var/www/html': No such file or directory`, 'tc-error'); return; }
-      const extras = Object.keys(vm.files).filter(f => f.startsWith('/var/www/html/') && f !== '/var/www/html/index.html').map(f => f.split('/').pop());
-      tPrint(['index.html', ...extras].join('  '), 'tc-default'); return;
+    const path = args.filter(a=>!a.startsWith('-'))[0] || '.';
+    const webRoot = VM_PROFILE.webRoot;
+    if (path === webRoot || path === webRoot+'/') {
+      if (!vm.packages[mainPkg]) { tPrint(`ls: cannot access '${webRoot}': No such file or directory`, 'tc-error'); return; }
+      const files = Object.keys(vm.files).filter(f => f.startsWith(webRoot+'/')).map(f => f.replace(webRoot+'/','').split('/')[0]);
+      tPrint([...new Set(files)].join('  ') || '(empty)', 'tc-default'); return;
     }
     if (path === '.' || path === '~' || path.includes('/home/')) {
       tPrint('Desktop  Documents  Downloads  Pictures  Videos', 'tc-default'); return;
     }
+    if (path === '/var/lib/docker' || path === '/etc/docker') {
+      if (!vm.packages['docker.io'] && !vm.packages['docker']) { tPrint(`ls: cannot access '${path}': No such file or directory`, 'tc-error'); return; }
+      tPrint('containers  image  network  volumes', 'tc-default'); return;
+    }
     tPrint(`ls: cannot access '${path}': No such file or directory`, 'tc-error'); return;
   }
 
-  // ── PWD ──
-  if (base === 'pwd') { const u=(student.name.split(' ')[0]||'student').toLowerCase(); tPrint(`/home/${u}`, 'tc-default'); return; }
-
-  // ── WHOAMI ──
-  if (base === 'whoami') { tPrint((student.name.split(' ')[0]||'student').toLowerCase(), 'tc-default'); return; }
-
-  // ── HOSTNAME ──
-  if (base === 'hostname') {
-    if ((args[0]||'') === '-I') tPrint('192.168.1.100 127.0.0.1', 'tc-default');
-    else tPrint('mubs-vm', 'tc-default');
-    return;
+  // ── MKDIR ──
+  if (base === 'mkdir') {
+    const dir = args.filter(a=>!a.startsWith('-'))[0] || '';
+    if (!dir) { tPrint('mkdir: missing operand', 'tc-error'); return; }
+    vm.files[dir] = vm.files[dir] || '__dir__';
+    tPrint('', 'tc-dim'); return;
   }
 
-  // ── IP / IFCONFIG ──
+  // ── PWD / WHOAMI / HOSTNAME / IP ──
+  if (base === 'pwd')      { tPrint(`/home/${(student.name.split(' ')[0]||'student').toLowerCase()}`, 'tc-default'); return; }
+  if (base === 'whoami')   { tPrint((student.name.split(' ')[0]||'student').toLowerCase(), 'tc-default'); return; }
+  if (base === 'hostname') { tPrint((args[0]||'')=='-I' ? '192.168.1.100 127.0.0.1' : 'mubs-vm', 'tc-default'); return; }
   if (base === 'ip' || base === 'ifconfig') {
     tPrint('lo:  127.0.0.1/8  ::1/128', 'tc-dim');
     tPrint('eth0: 192.168.1.100/24  (this VM\'s IP)', 'tc-default'); return;
   }
 
-  // ── APACHECTL ──
-  if (base === 'apachectl' || base === 'apache2ctl') {
-    if (!vm.apache) { tPrint('apachectl: apache2 not found — install it first.', 'tc-error'); return; }
+  // ── APACHECTL / NGINX ──
+  if (base === 'apachectl' || base === 'apache2ctl' || base === 'nginx') {
+    if (!vm.packages[mainPkg]) { tPrint(`${base}: not found — install ${mainPkg} first.`, 'tc-error'); return; }
     const sub = (args[0]||'').toLowerCase();
-    if (sub === '-v' || sub === 'version') { tPrint('Server version: Apache/2.4.54 (Ubuntu)\nServer built:   2023-08-01', 'tc-default'); return; }
-    if (sub === 'status') { runCmd('systemctl status apache2'); return; }
-    if (sub === 'start')  { runCmd('systemctl start apache2'); return; }
-    if (sub === 'stop')   { runCmd('systemctl stop apache2'); return; }
-    if (sub === 'restart'){ runCmd('systemctl restart apache2'); return; }
-    if (sub === 'configtest' || sub === 'graceful') { tPrint('Syntax OK', 'tc-success'); return; }
-    tPrint('Usage: apachectl start|stop|restart|status|configtest|-v', 'tc-dim'); return;
+    if (sub === '-v' || sub === '-V' || sub === 'version') { tPrint(`Server version: ${mainPkg}/2.4.54 (Ubuntu)`, 'tc-default'); return; }
+    if (sub === 'status')       { runCmd(`systemctl status ${mainSvc}`); return; }
+    if (sub === 'start')        { runCmd(`systemctl start ${mainSvc}`); return; }
+    if (sub === 'stop')         { runCmd(`systemctl stop ${mainSvc}`); return; }
+    if (sub === 'restart')      { runCmd(`systemctl restart ${mainSvc}`); return; }
+    if (sub === 'configtest' || sub === '-t' || sub === 'graceful') { tPrint('Syntax OK', 'tc-success'); return; }
+    tPrint(`Usage: ${base} start|stop|restart|status|configtest`, 'tc-dim'); return;
   }
 
   // ── UFW ──
   if (base === 'ufw') {
-    const sub = (args[0]||'').toLowerCase();
+    const sub  = (args[0]||'').toLowerCase();
+    const rule = (args[1]||'').toLowerCase();
     if (sub === 'allow') {
-      const rule = (args[1]||'');
-      if (['80','http','apache','apache full','apache2','apache2 full'].includes(rule.toLowerCase())) {
-        vm.ufw80 = true; tPrint(`Rule added: allow ${rule}`, 'tc-success'); return;
-      }
+      vm.flags['ufw_'+rule] = true;
+      tPrint(`Rule added: allow ${rule}`, 'tc-success'); return;
     }
     if (sub === 'status') {
       tPrint('Status: active', 'tc-success');
-      if (vm.ufw80) tPrint('80/tcp    ALLOW IN  Anywhere', 'tc-dim');
+      Object.keys(vm.flags).filter(k=>k.startsWith('ufw_')).forEach(k => tPrint(`${k.replace('ufw_','').padEnd(10)} ALLOW IN  Anywhere`, 'tc-dim'));
       return;
     }
-    tPrint('ufw: syntax error. Try: ufw allow 80', 'tc-warn'); return;
+    tPrint('Usage: ufw allow <port|service>', 'tc-warn'); return;
   }
-
-  // ── CLEAR ──
-  if (base === 'clear' || base === 'cls') { document.getElementById('term-output').innerHTML = ''; return; }
 
   // ── INTERNAL UNLOCK (obfuscated — do not document) ──
   (function(){
@@ -3148,6 +3425,50 @@ document.getElementById('term-pane').addEventListener('click', () => {
     document.getElementById('cmd-input').focus();
 });
 
+// ── Shared file-write handler (called after any write to a path) ──
+function handleFileWrite(path, content) {
+  const norm = path.replace(/\/+$/,'');
+  const webIndex = VM_PROFILE.webRoot + '/index.html';
+  if (norm === webIndex || norm === VM_PROFILE.webRoot + '/index.htm') {
+    processHomepage(content);
+  }
+  // Generic file flag for custom tasks referencing specific paths
+  EXAM.tasks.forEach(t => {
+    if (t.type === 'custom') {
+      const desc = (t.description + t.label).toLowerCase();
+      if (desc.includes(norm.toLowerCase()) || desc.includes(path.split('/').pop())) {
+        vm.flags['custom_'+t.id] = true;
+      }
+    }
+  });
+  evaluateAllTasks();
+}
+
+// ── Docker exec handler ──
+function handleDockerExec(cname, cmd) {
+  const lc = cmd.toLowerCase();
+  // MySQL commands inside container
+  if (/mysql/.test(lc)) {
+    tPrint('Welcome to the MySQL monitor. Commands end with ;', 'tc-dim');
+    vm.flags.dbRunning = true;
+    vm.statusChecked = true;
+    evaluateAllTasks();
+  } else if (/create\s+database/.test(lc)) {
+    const dbM = lc.match(/create\s+database\s+(\w+)/);
+    if (dbM) {
+      const dbName = dbM[1];
+      vm.flags.databases = vm.flags.databases || {};
+      vm.flags.databases[dbName] = { tables:{} };
+      tPrint(`Query OK, 1 row affected`, 'tc-success');
+      const dbTask = EXAM.tasks.find(t => t.type==='custom' && /database|db|creat/.test((t.description||t.label).toLowerCase()) && taskStates[t.id]!=='completed');
+      if (dbTask) { vm.flags['custom_'+dbTask.id]=true; completeTask(dbTask); }
+      evaluateAllTasks();
+    }
+  } else {
+    tPrint(`[exec output: ${cmd}]`, 'tc-dim');
+  }
+}
+
 // ══════════════════════════════════════════════════════════════
 //  SECTION 12 — CAT MODE SAVE
 // ══════════════════════════════════════════════════════════════
@@ -3158,7 +3479,7 @@ function saveCat() {
   tPrint(`(Saved to ${catPath})`, 'tc-info');
   catBuf = [];
   document.getElementById('cmd-input').value = '';
-  if (catPath.replace(/\/+$/,'') === '/var/www/html/index.html') processHomepage(content);
+  handleFileWrite(catPath, content);
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -3181,7 +3502,7 @@ function nanoSave() {
   document.getElementById('cmd-input').focus();
   tBlank();
   tPrint(`[Saved: ${nanoFilePath}]`, 'tc-success');
-  if (nanoFilePath.replace(/\/+$/,'') === '/var/www/html/index.html') processHomepage(content);
+  handleFileWrite(nanoFilePath, content);
   tBlank();
 }
 
@@ -3209,18 +3530,15 @@ document.getElementById('nano-ta').addEventListener('keydown', e => {
 //  SECTION 14 — BROWSER PREVIEW
 // ══════════════════════════════════════════════════════════════
 function showPreview() {
-  const page = vm.files['/var/www/html/index.html'];
-  if (!page) { toast('No Page Yet', 'Create /var/www/html/index.html first', 0, 'warn'); return; }
-  if (!vm.running) { toast('Server Not Running', 'Start Apache: sudo systemctl start apache2', 0, 'warn'); return; }
+  const page = vm.files[VM_PROFILE.webRoot + '/index.html'];
+  const svcSt = vm.services[VM_PROFILE.mainSvc] || {};
+  if (!page) { toast('No Page Yet', `Create ${VM_PROFILE.webRoot}/index.html first`, 0, 'warn'); return; }
+  if (!svcSt.running && !vm.flags.dbRunning) { toast('Server Not Running', `Start the service: sudo systemctl start ${VM_PROFILE.mainSvc}`, 0, 'warn'); return; }
   document.getElementById('preview-frame').srcdoc = page;
   document.getElementById('preview-url-bar').textContent = 'http://192.168.1.100/';
-  const ov = document.getElementById('preview-overlay');
-  ov.style.display = 'flex';
-
-  // Award URL access if not done
+  document.getElementById('preview-overlay').style.display = 'flex';
   vm.urlAccessed = true;
-  const t5 = EXAM.tasks.find(t => t.type === 'access_url');
-  if (t5 && taskStates[t5.id] !== 'completed') completeTask(t5);
+  evaluateAllTasks();
 }
 
 function closePreview() {
@@ -3360,6 +3678,24 @@ function exportResults() {
   toast('📤 Exported', 'Session results downloaded as .txt file', 0, 'info');
 }
 
+function emailResults() {
+  const total = Object.values(marks).reduce((a,b)=>a+b,0);
+  const rows  = EXAM.tasks.map(t => `${t.label.replace(/&amp;/g,'&')}: ${marks[t.id]||0}/${t.marks} [${taskStates[t.id]||'unattempted'}]`).join('%0A');
+  const subject = encodeURIComponent(`MUBS Exam Results — ${student.name} | ${student.regNo} | ${EXAM.courseCode}`);
+  const body    = encodeURIComponent(
+    `MUBS Exam Session Results\n` +
+    `Course: ${EXAM.courseCode} — ${EXAM.title}\n` +
+    `Date: ${EXAM.date} | Shift: ${EXAM.shift}\n` +
+    `Student: ${student.name} | Reg: ${student.regNo} | VM: ${student.vmId||'—'}\n` +
+    `Score: ${total} / ${EXAM.totalMarks}  (${Math.round(total/EXAM.totalMarks*100)}%)\n\n` +
+    `Task Breakdown:\n` +
+    EXAM.tasks.map(t => `  ${t.label.replace(/&amp;/g,'&')}: ${marks[t.id]||0}/${t.marks} [${taskStates[t.id]||'unattempted'}]`).join('\n') +
+    `\n\nExported: ${new Date().toLocaleString()}`
+  );
+  window.location.href = `mailto:?subject=${subject}&body=${body}`;
+  toast('✉ Email Draft Opened', 'Fill in recipient address and send.', 0, 'info');
+}
+
 // ══════════════════════════════════════════════════════════════
 //  SECTION 17 — VMWARE BRIDGE (Mock connection UI)
 // ══════════════════════════════════════════════════════════════
@@ -3390,7 +3726,8 @@ function copyAgent() {
 function confirmReset() {
   if (!confirm('Reset all progress and return to setup screen?')) return;
   clearInterval(timerInterval);
-  vm = { apache:false, running:false, enabled:false, files:{}, ufw80:false, urlAccessed:false, statusChecked:false };
+  // vm reset happens inside buildVMProfile() at next launch
+  vm.packages={}; vm.services={}; vm.files={}; vm.flags={}; vm.urlAccessed=false; vm.statusChecked=false;
   marks = {}; notified.clear(); hist = []; histIdx = -1;
   catMode = false; catBuf = []; catPath = '';
   document.getElementById('term-output').innerHTML = '';
