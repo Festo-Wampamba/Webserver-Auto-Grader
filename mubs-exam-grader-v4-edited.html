@@ -1032,6 +1032,13 @@ select.form-input { cursor: pointer; }
             </div>
 
             <button class="btn-proceed" onclick="proceedWithReviewedExam()">✔ Confirm &amp; Proceed to Student Login →</button>
+            <button id="btn-export-student" onclick="exportStudentFile()"
+              style="display:none;width:100%;margin-top:8px;padding:10px;
+                     background:rgba(0,200,100,0.12);border:1px solid var(--green);
+                     color:var(--green);border-radius:8px;font-size:12px;
+                     font-weight:700;cursor:pointer;font-family:var(--font-ui);">
+              ⬇ Download Offline Student File (No Internet Needed)
+            </button>
           </div>
         </div>
 
@@ -1625,19 +1632,24 @@ let _pdfWorkerReady = false;
 async function initPDFWorker() {
   if (_pdfWorkerReady) return;
   if (typeof pdfjsLib === 'undefined') return;
+  const CDN = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+  // On HTTP/HTTPS (GitHub Pages, Vercel, local server):
+  // Use CDN URL directly — no blob needed, avoids blob-request:// errors on Brave/Firefox
+  if (location.protocol === 'https:' || location.protocol === 'http:') {
+    pdfjsLib.GlobalWorkerOptions.workerSrc = CDN;
+    _pdfWorkerReady = true;
+    return;
+  }
+
+  // file:// protocol — try blob approach to suppress fake-worker warning
   try {
-    // Fetch the worker script and create a local blob URL —
-    // this is the only method that suppresses the "fake worker" warning
-    // when running from file:// (CDN URL alone doesn't satisfy the worker origin check)
-    const resp = await fetch(
-      'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'
-    );
+    const resp = await fetch(CDN);
     const blob = await resp.blob();
     pdfjsLib.GlobalWorkerOptions.workerSrc = URL.createObjectURL(blob);
     _pdfWorkerReady = true;
   } catch(_) {
-    // Offline or CDN unavailable — fake worker still works, just slower
-    pdfjsLib.GlobalWorkerOptions.workerSrc = '';
+    pdfjsLib.GlobalWorkerOptions.workerSrc = ''; // fake worker fallback
   }
 }
 
@@ -2235,6 +2247,7 @@ function proceedWithReviewedExam() {
   EXAM = { ...EXAM, title, courseCode: code, date, durationMinutes: duration, totalMarks, tasks };
   document.getElementById('review-editor').style.display = 'none';
   toast('Exam Confirmed!', `${tasks.length} tasks · ${totalMarks} marks`, 0, 'success');
+  document.getElementById('btn-export-student').style.display = 'block';
   setTimeout(() => switchSetupTab('student'), 600);
 }
 
@@ -3248,6 +3261,58 @@ function confirmReset() {
 // ══════════════════════════════════════════════════════════════
 //  INIT
 // ══════════════════════════════════════════════════════════════
+// ── SOURCE CACHE (for offline export) ────────────────────────────────────────
+let _origSrc = null;
+(async function _cacheSource() {
+  try {
+    if (location.protocol === 'https:' || location.protocol === 'http:') {
+      const r = await fetch(location.href);
+      _origSrc = await r.text();
+    }
+  } catch(_) { /* falls back to outerHTML */ }
+})();
+
+// ── EXPORT OFFLINE STUDENT FILE ──────────────────────────────────────────────
+function exportStudentFile() {
+  const src = _origSrc || ('<!DOCTYPE html>\n' + document.documentElement.outerHTML);
+  const examJson = JSON.stringify(EXAM, null, 2);
+  const solJson  = JSON.stringify(_examSolutions, null, 2);
+
+  let out = src;
+
+  out = out.replace(
+    'let EXAM = JSON.parse(JSON.stringify(DEFAULT_EXAM)); // active exam config',
+    `let EXAM = ${examJson}; // PRE-CONFIGURED (exported ${new Date().toLocaleDateString()})`
+  );
+  out = out.replace(
+    'let _examSolutions = {}; // taskId -> solution text',
+    `let _examSolutions = ${solJson};`
+  );
+  out = out.replace(
+    '<title>MUBS \u2014 Real-Time VM Exam Grader v2.0</title>',
+    `<title>MUBS Grader \u2014 ${EXAM.courseCode} ${EXAM.date}</title>`
+  );
+  // Hide export button in the student copy (examiner-only)
+  out = out.replace(
+    'id="btn-export-student"',
+    'id="btn-export-student" style="display:none!important"'
+  );
+
+  const blob = new Blob([out], { type: 'text/html' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  const code = (EXAM.courseCode || 'exam').toLowerCase().replace(/\s+/g, '-');
+  const date = (EXAM.date || '').replace(/[\s\/]/g, '-').toLowerCase();
+  a.download = `mubs-grader-${code}-${date}.html`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  toast('Export Complete!',
+    'Pre-configured file downloaded. Students open it offline \u2014 no internet needed for tasks.',
+    0, 'success');
+}
+
 (async function init() {
   loadORKey();
   await checkInternet();   // must await — isOnline used immediately on PDF upload
