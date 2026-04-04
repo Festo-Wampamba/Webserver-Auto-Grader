@@ -904,40 +904,64 @@ select.form-input { cursor: pointer; }
           <span id="inet-label">Checking connection…</span>
         </div>
 
-        <!-- OpenRouter AI Keys -->
+        <!-- AI Provider Keys -->
         <div class="ai-key-section" id="ai-key-section">
           <div class="ai-key-header">
-            <span class="ai-key-title">🤖 AI Parser — OpenRouter</span>
+            <span class="ai-key-title">🤖 AI Providers — Multi-Model</span>
             <span class="ai-key-badge" id="ai-key-badge-global">CONFIGURE</span>
           </div>
 
-          <!-- Key 1: Llama 4 Maverick -->
+          <!-- Key 1: Llama 4 Maverick via OpenRouter -->
           <div style="margin-bottom:10px">
             <div style="font-size:11px;color:var(--dim);margin-bottom:5px;font-family:var(--font-mono)">
-              🦙 Primary — Meta Llama 4 Maverick
+              🦙 [1] Meta Llama 4 Maverick — OpenRouter
             </div>
             <div class="ai-key-row">
-              <input type="password" id="or-key-llama" class="ai-key-input" placeholder="sk-or-v1-… (Llama 4 Maverick key)">
+              <input type="password" id="or-key-llama" class="ai-key-input" placeholder="sk-or-v1-… (OpenRouter key)">
               <button class="btn-save-key" onclick="saveKey('llama')">Save</button>
             </div>
             <div class="ai-key-status empty" id="ai-key-status-llama">No key saved</div>
           </div>
 
-          <!-- Key 2: DeepSeek V3.2 -->
-          <div style="margin-bottom:6px">
+          <!-- Key 2: DeepSeek V3 via OpenRouter -->
+          <div style="margin-bottom:10px">
             <div style="font-size:11px;color:var(--dim);margin-bottom:5px;font-family:var(--font-mono)">
-              🧠 Secondary — DeepSeek V3.2
+              🧠 [2] DeepSeek V3 — OpenRouter
             </div>
             <div class="ai-key-row">
-              <input type="password" id="or-key-deepseek" class="ai-key-input" placeholder="sk-or-v1-… (DeepSeek V3.2 key)">
+              <input type="password" id="or-key-deepseek" class="ai-key-input" placeholder="sk-or-v1-… (OpenRouter key)">
               <button class="btn-save-key" onclick="saveKey('deepseek')">Save</button>
             </div>
             <div class="ai-key-status empty" id="ai-key-status-deepseek">No key saved</div>
           </div>
 
+          <!-- Key 3: Gemini via Google AI Studio -->
+          <div style="margin-bottom:10px">
+            <div style="font-size:11px;color:var(--dim);margin-bottom:5px;font-family:var(--font-mono)">
+              ✨ [3] Gemini 2.0 Flash — Google AI Studio
+            </div>
+            <div class="ai-key-row">
+              <input type="password" id="or-key-gemini" class="ai-key-input" placeholder="AIzaSy… (AI Studio key)">
+              <button class="btn-save-key" onclick="saveKey('gemini')">Save</button>
+            </div>
+            <div class="ai-key-status empty" id="ai-key-status-gemini">No key saved</div>
+          </div>
+
+          <!-- Key 4: Groq -->
+          <div style="margin-bottom:6px">
+            <div style="font-size:11px;color:var(--dim);margin-bottom:5px;font-family:var(--font-mono)">
+              ⚡ [4] LLaMA 3.3 70B — Groq
+            </div>
+            <div class="ai-key-row">
+              <input type="password" id="or-key-groq" class="ai-key-input" placeholder="gsk_… (Groq key)">
+              <button class="btn-save-key" onclick="saveKey('groq')">Save</button>
+            </div>
+            <div class="ai-key-status empty" id="ai-key-status-groq">No key saved</div>
+          </div>
+
           <p class="ai-key-help" style="margin-top:8px">
-            Keys are saved locally in your browser only — never sent anywhere except OpenRouter.
-            Falls back to free models if both keys are missing.
+            Keys saved locally in your browser only. Models tried in order [1]→[2]→[3]→[4], skipping any without a key.
+            Falls back to free OpenRouter models if all fail.
           </p>
         </div>
 
@@ -1608,63 +1632,60 @@ setInterval(async () => {
 }, 30000);
 
 // ══════════════════════════════════════════════════════════════
-//  OPENROUTER KEY MANAGEMENT — multi-key (Llama + DeepSeek)
+//  AI KEY MANAGEMENT — 4 providers (OpenRouter×2, Gemini, Groq)
 // ══════════════════════════════════════════════════════════════
-// _orKey kept as alias to whichever key is available (for legacy callers)
-let _orKey = '';
-let _keys = { llama: '', deepseek: '' };
+let _orKey = ''; // legacy alias
+let _keys  = { llama: '', deepseek: '', gemini: '', groq: '' };
 
+const KEY_LABELS = {
+  llama:    'Llama 4 Maverick (OpenRouter)',
+  deepseek: 'DeepSeek V3 (OpenRouter)',
+  gemini:   'Gemini 2.0 Flash (Google)',
+  groq:     'LLaMA 3.3 70B (Groq)'
+};
 
 function loadORKey() {
   try {
     _keys.llama    = localStorage.getItem('mubs_or_key_llama')    || '';
     _keys.deepseek = localStorage.getItem('mubs_or_key_deepseek') || '';
+    _keys.gemini   = localStorage.getItem('mubs_or_key_gemini')   || '';
+    _keys.groq     = localStorage.getItem('mubs_or_key_groq')     || '';
     // legacy single-key migration
-    const legacy   = localStorage.getItem('mubs_or_key') || '';
+    const legacy = localStorage.getItem('mubs_or_key') || '';
     if (legacy && !_keys.llama) { _keys.llama = legacy; }
   } catch(_) {}
-  _orKey = _keys.llama || _keys.deepseek; // for backward compat
+  _orKey = _keys.llama || _keys.deepseek || _keys.gemini || _keys.groq;
   updateAIKeyUI();
 }
 
 function saveKey(slot) {
-  const inputId = slot === 'llama' ? 'or-key-llama' : 'or-key-deepseek';
-  const val = document.getElementById(inputId).value.trim();
+  const val = (document.getElementById(`or-key-${slot}`)?.value || '').trim();
   if (!val) { toast('No Key', 'Paste the API key first.', 0, 'error'); return; }
   _keys[slot] = val;
   try { localStorage.setItem(`mubs_or_key_${slot}`, val); } catch(_) {}
-  document.getElementById(inputId).value = '';
-  _orKey = _keys.llama || _keys.deepseek;
+  document.getElementById(`or-key-${slot}`).value = '';
+  _orKey = _keys.llama || _keys.deepseek || _keys.gemini || _keys.groq;
   updateAIKeyUI();
-  const label = slot === 'llama' ? 'Llama 4 Maverick' : 'DeepSeek V3.2';
-  toast('Key Saved', `${label} key stored in browser.`, 0, 'success');
+  toast('Key Saved', `${KEY_LABELS[slot]} key stored in browser.`, 0, 'success');
 }
 
-// Keep old saveORKey in case called anywhere else
 function saveORKey() { saveKey('llama'); }
 
 function updateAIKeyUI() {
-  const slots = ['llama', 'deepseek'];
-  slots.forEach(slot => {
+  Object.keys(_keys).forEach(slot => {
     const st = document.getElementById(`ai-key-status-${slot}`);
     if (!st) return;
     const k = _keys[slot];
-    if (k) {
-      st.textContent = `✓ Saved: ${k.substring(0,10)}…${k.slice(-4)}`;
-      st.className = 'ai-key-status saved';
-    } else {
-      st.textContent = 'No key saved';
-      st.className = 'ai-key-status empty';
-    }
+    st.textContent = k ? `✓ Saved: ${k.substring(0,10)}…${k.slice(-4)}` : 'No key saved';
+    st.className   = k ? 'ai-key-status saved' : 'ai-key-status empty';
   });
-
-  const anyKey = !!(_keys.llama || _keys.deepseek);
-  const badge = document.getElementById('ai-key-badge-global');
+  const anyKey = Object.values(_keys).some(k => !!k);
+  const badge  = document.getElementById('ai-key-badge-global');
   if (badge) {
-    badge.textContent = anyKey ? 'READY' : 'CONFIGURE';
-    badge.style.background = anyKey ? 'var(--green-d)' : '';
-    badge.style.borderColor = anyKey ? 'var(--green-b)' : '';
-    badge.style.color = anyKey ? 'var(--green)' : '';
+    badge.textContent        = anyKey ? 'READY' : 'CONFIGURE';
+    badge.style.background   = anyKey ? 'var(--green-d)' : '';
+    badge.style.borderColor  = anyKey ? 'var(--green-b)' : '';
+    badge.style.color        = anyKey ? 'var(--green)' : '';
   }
   const genBtn = document.getElementById('btn-gen-solutions');
   if (genBtn) genBtn.disabled = !(anyKey && isOnline);
@@ -1739,12 +1760,15 @@ async function handlePDFUpload(input) {
 
     status.textContent = '⟳ Checking connection & preparing AI…';
 
-    // ── Grab unsaved key from either input field if examiner pasted but didn't click Save ──
-    const llamaInput    = (document.getElementById('or-key-llama')?.value    || '').trim();
-    const deepseekInput = (document.getElementById('or-key-deepseek')?.value || '').trim();
-    if (llamaInput    && !_keys.llama)    { _keys.llama    = llamaInput;    try { localStorage.setItem('mubs_or_key_llama',    llamaInput);    } catch(_){} }
-    if (deepseekInput && !_keys.deepseek) { _keys.deepseek = deepseekInput; try { localStorage.setItem('mubs_or_key_deepseek', deepseekInput); } catch(_){} }
-    _orKey = _keys.llama || _keys.deepseek;
+    // ── Grab any unsaved keys from input fields (pasted but not yet clicked Save) ──
+    ['llama','deepseek','gemini','groq'].forEach(slot => {
+      const v = (document.getElementById(`or-key-${slot}`)?.value || '').trim();
+      if (v && !_keys[slot]) {
+        _keys[slot] = v;
+        try { localStorage.setItem(`mubs_or_key_${slot}`, v); } catch(_) {}
+      }
+    });
+    _orKey = _keys.llama || _keys.deepseek || _keys.gemini || _keys.groq;
     updateAIKeyUI();
 
     // ── Re-check connectivity right now (don't rely on cached isOnline from page load) ──
@@ -1799,33 +1823,45 @@ async function handlePDFUpload(input) {
 }
 
 // ══════════════════════════════════════════════════════════════
-//  OPENROUTER CHAT — keyed models first, free fallbacks after
+//  MULTI-PROVIDER AI CHAT
+//  Priority: Llama4(OR) → DeepSeek(OR) → Gemini(Google) → Groq → free OR
 // ══════════════════════════════════════════════════════════════
-const FREE_MODELS = [
+const OR_FREE_MODELS = [
   'meta-llama/llama-3.1-8b-instruct:free',
-  'mistralai/mistral-7b-instruct:free',
   'google/gemma-2-9b-it:free'
 ];
 
-// Verified OpenRouter model slugs (check openrouter.ai/models)
-const KEY_MODEL_IDS = {
-  llama:    'meta-llama/llama-4-maverick:free',  // Llama 4 Maverick — free tier on OR
-  deepseek: 'deepseek/deepseek-chat'             // DeepSeek V3 (latest)
-};
-
 function buildModelQueue() {
   const queue = [];
-  const fallbackKey = _keys.llama || _keys.deepseek || '';
-  if (_keys.llama)    queue.push({ model: KEY_MODEL_IDS.llama,    key: _keys.llama,    label: 'Llama 4 Maverick' });
-  if (_keys.deepseek) queue.push({ model: KEY_MODEL_IDS.deepseek, key: _keys.deepseek, label: 'DeepSeek V3' });
-  FREE_MODELS.forEach(m => queue.push({ model: m, key: fallbackKey, label: m.split('/')[1] }));
+  const anyOrKey = _keys.llama || _keys.deepseek || '';
+
+  // 1. Llama 4 Maverick via OpenRouter
+  if (_keys.llama)
+    queue.push({ provider:'openrouter', model:'meta-llama/llama-4-maverick', key:_keys.llama, label:'Llama 4 Maverick' });
+
+  // 2. DeepSeek V3 via OpenRouter
+  if (_keys.deepseek)
+    queue.push({ provider:'openrouter', model:'deepseek/deepseek-chat', key:_keys.deepseek, label:'DeepSeek V3' });
+
+  // 3. Gemini 2.0 Flash via Google AI Studio
+  if (_keys.gemini)
+    queue.push({ provider:'gemini', model:'gemini-2.0-flash', key:_keys.gemini, label:'Gemini 2.0 Flash' });
+
+  // 4. LLaMA 3.3 70B via Groq
+  if (_keys.groq)
+    queue.push({ provider:'groq', model:'llama-3.3-70b-versatile', key:_keys.groq, label:'LLaMA 3.3 70B (Groq)' });
+
+  // 5. Free OR fallbacks (only if we have at least one OR key)
+  if (anyOrKey)
+    OR_FREE_MODELS.forEach(m => queue.push({ provider:'openrouter', model:m, key:anyOrKey, label:m.split('/')[1] }));
+
   return queue;
 }
 
-const OR_TIMEOUT_MS = 30000; // 30 seconds per model attempt
+const OR_TIMEOUT_MS = 25000;
 
-async function orFetch(url, options) {
-  const ctrl = new AbortController();
+async function timedFetch(url, options) {
+  const ctrl  = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), OR_TIMEOUT_MS);
   try {
     return await fetch(url, { ...options, signal: ctrl.signal });
@@ -1834,53 +1870,79 @@ async function orFetch(url, options) {
   }
 }
 
+// Each provider gets its own request builder + response extractor
+async function callProvider({ provider, model, key, label }, messages, maxTokens) {
+  let resp;
+  if (provider === 'openrouter') {
+    resp = await timedFetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${key}`,
+        'HTTP-Referer': 'https://festo-wampamba.github.io/Webserver-Auto-Grader/',
+        'X-Title': 'MUBS Exam Grader'
+      },
+      body: JSON.stringify({ model, max_tokens: maxTokens, messages })
+    });
+    if (!resp.ok) throw new Error(`OR ${resp.status}`);
+    const d = await resp.json();
+    return d.choices?.[0]?.message?.content || '';
+
+  } else if (provider === 'gemini') {
+    // Google Generative Language REST API (no server needed)
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
+    resp = await timedFetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: messages.map(m => ({
+          role: m.role === 'assistant' ? 'model' : 'user',
+          parts: [{ text: m.content }]
+        })),
+        generationConfig: { maxOutputTokens: maxTokens }
+      })
+    });
+    if (!resp.ok) throw new Error(`Gemini ${resp.status}`);
+    const d = await resp.json();
+    return d.candidates?.[0]?.content?.parts?.[0]?.text || '';
+
+  } else if (provider === 'groq') {
+    resp = await timedFetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${key}`
+      },
+      body: JSON.stringify({ model, max_tokens: maxTokens, messages })
+    });
+    if (!resp.ok) throw new Error(`Groq ${resp.status}`);
+    const d = await resp.json();
+    return d.choices?.[0]?.message?.content || '';
+  }
+  throw new Error(`Unknown provider: ${provider}`);
+}
+
 async function orChat(messages, maxTokens, statusEl) {
   const queue = buildModelQueue();
+  if (queue.length === 0) throw new Error('No API keys configured — add at least one key above');
   let lastErr = null;
   for (let i = 0; i < queue.length; i++) {
-    const { model, key, label } = queue[i];
-    if (statusEl) statusEl.textContent = `⟳ [${i+1}/${queue.length}] ${label} — please wait…`;
+    const entry = queue[i];
+    if (statusEl) statusEl.textContent = `⟳ [${i+1}/${queue.length}] ${entry.label} — please wait…`;
     try {
-      const resp = await orFetch('https://openrouter.ai/api/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${key}`,
-          'HTTP-Referer': 'https://festo-wampamba.github.io/Webserver-Auto-Grader/',
-          'X-Title': 'MUBS Exam Grader'
-        },
-        body: JSON.stringify({ model, max_tokens: maxTokens, messages })
-      });
-      if ([404, 503, 529].includes(resp.status)) {
-        lastErr = new Error(`${label} unavailable (${resp.status}) — trying next…`);
-        if (statusEl) statusEl.textContent = `⚠ ${lastErr.message}`;
-        await new Promise(r => setTimeout(r, 800));
-        continue;
-      }
-      if (resp.status === 429) {
-        lastErr = new Error(`${label} rate-limited — trying next…`);
-        if (statusEl) statusEl.textContent = `⚠ ${lastErr.message}`;
-        await new Promise(r => setTimeout(r, 1500));
-        continue;
-      }
-      if (!resp.ok) {
-        lastErr = new Error(`${label} error ${resp.status}`);
-        continue;
-      }
-      const data = await resp.json();
-      const content = data.choices?.[0]?.message?.content || '';
-      if (!content) { lastErr = new Error(`Empty response from ${label}`); continue; }
-      if (statusEl) statusEl.textContent = `✓ Got response from ${label}`;
-      return { content, model, label };
+      const content = await callProvider(entry, messages, maxTokens);
+      if (!content) { lastErr = new Error(`Empty response from ${entry.label}`); continue; }
+      if (statusEl) statusEl.textContent = `✓ Response from ${entry.label}`;
+      return { content, model: entry.model, label: entry.label };
     } catch (e) {
       lastErr = e.name === 'AbortError'
-        ? new Error(`${label} timed out after 30s — trying next…`)
-        : e;
+        ? new Error(`${entry.label} timed out — trying next…`)
+        : new Error(`${entry.label}: ${e.message}`);
       if (statusEl) statusEl.textContent = `⚠ ${lastErr.message}`;
-      await new Promise(r => setTimeout(r, 500));
+      await new Promise(r => setTimeout(r, 600));
     }
   }
-  throw lastErr || new Error('All AI models unavailable — check your API keys or try again later');
+  throw lastErr || new Error('All AI providers failed — check keys or try again later');
 }
 
 async function parseExamWithOpenRouter(pdfText, statusEl) {
