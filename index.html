@@ -1743,13 +1743,13 @@ async function handlePDFUpload(input) {
 
     status.textContent = '⟳ Checking connection & preparing AI…';
 
-    // ── Key: also grab from input field if user pasted but hasn't clicked Save yet ──
-    const inputFieldKey = document.getElementById('or-key').value.trim();
-    if (inputFieldKey && !_orKey) {
-      _orKey = inputFieldKey;
-      try { localStorage.setItem('mubs_or_key', _orKey); } catch(_) {}
-      updateAIKeyUI();
-    }
+    // ── Grab unsaved key from either input field if examiner pasted but didn't click Save ──
+    const llamaInput    = (document.getElementById('or-key-llama')?.value    || '').trim();
+    const deepseekInput = (document.getElementById('or-key-deepseek')?.value || '').trim();
+    if (llamaInput    && !_keys.llama)    { _keys.llama    = llamaInput;    try { localStorage.setItem('mubs_or_key_llama',    llamaInput);    } catch(_){} }
+    if (deepseekInput && !_keys.deepseek) { _keys.deepseek = deepseekInput; try { localStorage.setItem('mubs_or_key_deepseek', deepseekInput); } catch(_){} }
+    _orKey = _keys.llama || _keys.deepseek;
+    updateAIKeyUI();
 
     // ── Re-check connectivity right now (don't rely on cached isOnline from page load) ──
     const currentlyOnline = await pingOnline();
