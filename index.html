@@ -1591,6 +1591,25 @@ let hist = [], histIdx = -1;
 // Cat mode (cat > file)
 let catMode = false, catBuf = [], catPath = '';
 
+// MySQL interactive mode
+let mysqlMode = false, mysqlCurrentDb = '';
+function setMysqlMode(on) {
+  mysqlMode = on;
+  if (!on) mysqlCurrentDb = '';
+  const el = document.getElementById('prompt-str');
+  if (!el) return;
+  if (on) {
+    el.textContent = 'mysql> ';
+    el.style.color = 'var(--amber)';
+    document.getElementById('cmd-input').placeholder = 'Type SQL… (\\q to exit)';
+  } else {
+    const u = (student.name.split(' ')[0]||'student').toLowerCase();
+    el.textContent = `${u}@mubs-vm:~$ `;
+    el.style.color = '';
+    document.getElementById('cmd-input').placeholder = 'Type a Linux command…';
+  }
+}
+
 // Nano
 let nanoFilePath = '';
 
@@ -2927,6 +2946,13 @@ function runCmd(raw) {
   if (!trimmed) return;
 
   const promptUser = (student.name.split(' ')[0] || 'student').toLowerCase();
+
+  // ── MySQL interactive shell ──
+  if (mysqlMode) {
+    processMysqlInput(trimmed);
+    return;
+  }
+
   tPrint(`${promptUser}@mubs-vm:~$ ${trimmed}`, 'tc-prompt');
 
   // Tokenise
@@ -3137,6 +3163,13 @@ function runCmd(raw) {
       // Award run/create container task
       const runTask = EXAM.tasks.find(t => t.type === 'custom' && /run|creat|contai/.test((t.description||t.label).toLowerCase()) && taskStates[t.id] !== 'completed');
       if (runTask) { vm.flags['custom_'+runTask.id] = true; completeTask(runTask); }
+      // Detect MYSQL_ROOT_PASSWORD from -e env flag → award password task
+      const mysqlPassM = trimmed.match(/MYSQL_ROOT_PASSWORD=(['"]?)([^'"\s]+)\1/);
+      if (mysqlPassM) {
+        vm.flags.dbRootPass = mysqlPassM[2];
+        const passTask = EXAM.tasks.find(t => t.type==='custom' && /password|pass|root/.test((t.description||t.label).toLowerCase()) && taskStates[t.id]!=='completed');
+        if (passTask) { vm.flags['custom_'+passTask.id]=true; completeTask(passTask); }
+      }
       evaluateAllTasks();
       return;
     }
@@ -3164,10 +3197,14 @@ function runCmd(raw) {
       return;
     }
     if (sub === 'exec') {
-      // docker exec -it <cname> <cmd>
-      const execCmd = rest.slice(2).join(' ');
+      // docker exec [-it/-i/-t] <cname> <cmd...>  — skip flags to find container name
+      let execCname = '', execCmdStart = 0;
+      for (let i = 0; i < rest.length; i++) {
+        if (!rest[i].startsWith('-')) { execCname = rest[i]; execCmdStart = i + 1; break; }
+      }
+      const execCmd = rest.slice(execCmdStart).join(' ');
       tPrint(`[Container shell: ${execCmd}]`, 'tc-dim');
-      handleDockerExec(rest[1]||'', execCmd);
+      handleDockerExec(execCname, execCmd);
       return;
     }
     if (sub === '--version' || sub === 'version') {
@@ -3176,34 +3213,59 @@ function runCmd(raw) {
     tPrint(`docker: '${sub}' is not a docker command.`, 'tc-error'); return;
   }
 
-  // ── MYSQL client ──
-  if (base === 'mysql' || base === 'mysqladmin') {
+  // ── MYSQLADMIN ──
+  if (base === 'mysqladmin') {
     const svcSt = vm.services[mainSvc] || {};
     if (!svcSt.running && !vm.flags.dbRunning) {
-      tPrint('ERROR 2002 (HY000): Can\'t connect to MySQL server — start mysql first.', 'tc-error'); return;
+      tPrint('ERROR 2002 (HY000): Can\'t connect to MySQL server — start MySQL first.', 'tc-error'); return;
     }
-    if (base === 'mysqladmin') {
-      const sub = (args.find(a=>!a.startsWith('-'))||'').toLowerCase();
-      if (sub === 'password' || trimmed.includes('-p') || trimmed.includes('password')) {
-        const pass = args.find(a=>!a.startsWith('-') && a !== sub) || '';
-        vm.flags.dbRootPass = pass || 'set';
-        tPrint('mysqladmin: [Warning] Using a password on the command line interface can be insecure.', 'tc-warn');
-        tPrint('Password updated successfully.', 'tc-success');
-        // Award set-password task
-        const passTask = EXAM.tasks.find(t => t.type==='custom' && /password|pass|root/.test((t.description||t.label).toLowerCase()) && taskStates[t.id]!=='completed');
-        if (passTask) { vm.flags['custom_'+passTask.id]=true; completeTask(passTask); }
-        evaluateAllTasks(); return;
-      }
-      if (sub === 'status') { tPrint('Uptime: 120  Threads: 1  Questions: 5  Slow queries: 0', 'tc-default'); return; }
-      return;
+    const msub = (args.find(a=>!a.startsWith('-'))||'').toLowerCase();
+    if (msub === 'password' || /password/.test(trimmed)) {
+      const pass = args.filter(a=>!a.startsWith('-')).find(a=>a!==msub) || '';
+      vm.flags.dbRootPass = pass || 'set';
+      tPrint('mysqladmin: [Warning] Using a password on the command line interface can be insecure.', 'tc-warn');
+      tPrint('Password updated successfully.', 'tc-success');
+      const passTask = EXAM.tasks.find(t => t.type==='custom' && /password|pass|root/.test((t.description||t.label).toLowerCase()) && taskStates[t.id]!=='completed');
+      if (passTask) { vm.flags['custom_'+passTask.id]=true; completeTask(passTask); }
+      evaluateAllTasks(); return;
     }
-    // mysql interactive / query
-    tPrint('Welcome to the MySQL monitor. Type \'help;\' for help. Type \'\\q\' to quit.', 'tc-dim');
-    tPrint('mysql>', 'tc-prompt');
-    // Any mysql invocation counts as status checked
+    if (msub === 'status') { tPrint('Uptime: 120  Threads: 1  Questions: 5  Slow queries: 0', 'tc-default'); return; }
+    tPrint('mysqladmin  Ver 8.0 Distrib 8.0.35', 'tc-dim'); return;
+  }
+
+  // ── MYSQL client ──
+  if (base === 'mysql') {
+    const svcSt = vm.services[mainSvc] || {};
+    if (!svcSt.running && !vm.flags.dbRunning) {
+      tPrint('ERROR 2002 (HY000): Can\'t connect to MySQL server — start MySQL first.', 'tc-error'); return;
+    }
     vm.statusChecked = true;
-    evaluateAllTasks();
-    return;
+
+    // -e flag: inline SQL (non-interactive)
+    const eIdx = args.indexOf('-e');
+    if (eIdx !== -1 && args[eIdx+1]) {
+      const sql = args[eIdx+1].toLowerCase();
+      tPrint('Welcome to the MySQL monitor.', 'tc-dim');
+      if (/create\s+database/.test(sql)) {
+        const dbM = sql.match(/create\s+database\s+(?:if\s+not\s+exists\s+)?(\w+)/);
+        if (dbM) {
+          vm.flags.databases = vm.flags.databases || {};
+          vm.flags.databases[dbM[1]] = { tables:{} };
+          tPrint('Query OK, 1 row affected (0.01 sec)', 'tc-success');
+          const dbTask = EXAM.tasks.find(t => t.type==='custom' && /database|db/.test((t.description||t.label).toLowerCase()) && taskStates[t.id]!=='completed');
+          if (dbTask) { vm.flags['custom_'+dbTask.id]=true; completeTask(dbTask); }
+        }
+      } else {
+        tPrint('Query OK', 'tc-success');
+      }
+      evaluateAllTasks(); return;
+    }
+
+    // Interactive mode
+    tPrint('Welcome to the MySQL monitor.  Commands end with ; or \\g.', 'tc-dim');
+    tPrint(`Type 'help;' or '\\h' for help. Type '\\c' to clear. '\\q' to quit.`, 'tc-dim');
+    setMysqlMode(true);
+    evaluateAllTasks(); return;
   }
 
   // ── NANO / VIM / VI / TOUCH ──
@@ -3283,6 +3345,22 @@ function runCmd(raw) {
     if (!dir) { tPrint('mkdir: missing operand', 'tc-error'); return; }
     vm.files[dir] = vm.files[dir] || '__dir__';
     tPrint('', 'tc-dim'); return;
+  }
+
+  // ── CD ──
+  if (base === 'cd') {
+    const dir = args[0] || '~';
+    // Just acknowledge navigation — no real filesystem state needed for grading
+    if (dir === '~' || dir === '/root' || dir.includes('/home/')) {
+      tPrint('', 'tc-dim');
+    } else if (dir === '/' || dir.startsWith('/var') || dir.startsWith('/etc') || dir.startsWith('/usr') || dir.startsWith('/tmp') || dir.startsWith('/opt')) {
+      tPrint('', 'tc-dim');
+    } else if (dir === '-') {
+      tPrint('/home/' + (student.name.split(' ')[0]||'student').toLowerCase(), 'tc-dim');
+    } else {
+      tPrint(`bash: cd: ${dir}: No such file or directory`, 'tc-error');
+    }
+    return;
   }
 
   // ── PWD / WHOAMI / HOSTNAME / IP ──
@@ -3396,6 +3474,15 @@ document.getElementById('cmd-input').addEventListener('keydown', e => {
     return;
   }
 
+  // MySQL interactive mode — Ctrl+C or Ctrl+D exits
+  if (mysqlMode && e.ctrlKey && (e.key === 'c' || e.key === 'd')) {
+    e.preventDefault();
+    input.value = '';
+    tPrint('Bye', 'tc-dim'); tBlank();
+    setMysqlMode(false);
+    return;
+  }
+
   if (e.key === 'Enter') {
     e.preventDefault();
     const cmd = input.value;
@@ -3446,27 +3533,87 @@ function handleFileWrite(path, content) {
 
 // ── Docker exec handler ──
 function handleDockerExec(cname, cmd) {
-  const lc = cmd.toLowerCase();
-  // MySQL commands inside container
-  if (/mysql/.test(lc)) {
-    tPrint('Welcome to the MySQL monitor. Commands end with ;', 'tc-dim');
+  const lc = cmd.toLowerCase().trim();
+
+  // mysqladmin inside container (password change, status)
+  if (/mysqladmin/.test(lc)) {
+    tPrint('Welcome to mysqladmin.', 'tc-dim');
+    if (/password/.test(lc) || /passwd/.test(lc)) {
+      const passM = cmd.match(/password\s+['"]?([^'"]+?)['"]?\s*$/)
+                 || cmd.match(/-p['"]?([^\s'"]+)/);
+      vm.flags.dbRootPass = passM ? passM[1].trim() : 'set';
+      tPrint('mysqladmin: [Warning] Using a password on the command line interface can be insecure.', 'tc-warn');
+      tPrint('Password updated successfully.', 'tc-success');
+      const passTask = EXAM.tasks.find(t => t.type==='custom' && /password|pass|root/.test((t.description||t.label).toLowerCase()) && taskStates[t.id]!=='completed');
+      if (passTask) { vm.flags['custom_'+passTask.id]=true; completeTask(passTask); }
+      evaluateAllTasks();
+    } else if (/status/.test(lc)) {
+      tPrint('Uptime: 120  Threads: 1  Questions: 5  Slow queries: 0', 'tc-default');
+    }
+    return;
+  }
+
+  // mysql client commands inside container
+  if (/\bmysql\b/.test(lc)) {
     vm.flags.dbRunning = true;
     vm.statusChecked = true;
+
+    // -e flag: inline SQL execution (e.g. mysql -u root -p123 -e 'CREATE DATABASE foo;')
+    // After tokenization the quoted SQL becomes a bare token joined in cmd
+    const eM = cmd.match(/-e\s+(.+)$/i);
+    const inlineSQL = eM ? eM[1].replace(/^['"]|['"]$/g,'').toLowerCase() : '';
+    const fullSQL   = inlineSQL || lc;
+
+    if (/create\s+database/.test(fullSQL)) {
+      tPrint('Welcome to the MySQL monitor. Commands end with ;', 'tc-dim');
+      const dbM = fullSQL.match(/create\s+database\s+(?:if\s+not\s+exists\s+)?(\w+)/i);
+      if (dbM) {
+        const dbName = dbM[1];
+        vm.flags.databases = vm.flags.databases || {};
+        vm.flags.databases[dbName] = { tables:{} };
+        tPrint(`Query OK, 1 row affected (0.01 sec)`, 'tc-success');
+        const dbTask = EXAM.tasks.find(t => t.type==='custom' && /database|db/.test((t.description||t.label).toLowerCase()) && taskStates[t.id]!=='completed');
+        if (dbTask) { vm.flags['custom_'+dbTask.id]=true; completeTask(dbTask); }
+      }
+      evaluateAllTasks();
+      return;
+    }
+
+    if (/create\s+table/.test(fullSQL)) {
+      const tM = fullSQL.match(/create\s+table\s+(?:if\s+not\s+exists\s+)?(\w+)/i);
+      if (tM && mysqlCurrentDb) {
+        vm.flags.databases[mysqlCurrentDb] = vm.flags.databases[mysqlCurrentDb] || { tables:{} };
+        vm.flags.databases[mysqlCurrentDb].tables[tM[1]] = [];
+        tPrint(`Query OK, 0 rows affected`, 'tc-success');
+        const tableTask = EXAM.tasks.find(t => t.type==='custom' && /table/.test((t.description||t.label).toLowerCase()) && taskStates[t.id]!=='completed');
+        if (tableTask) { vm.flags['custom_'+tableTask.id]=true; completeTask(tableTask); }
+      }
+      evaluateAllTasks(); return;
+    }
+
+    // Plain mysql login — enter interactive mode
+    tPrint('Welcome to the MySQL monitor. Commands end with ;', 'tc-dim');
+    tPrint(`Type 'help;' or '\\h' for help. Type '\\c' to clear.`, 'tc-dim');
+    setMysqlMode(true);
     evaluateAllTasks();
-  } else if (/create\s+database/.test(lc)) {
-    const dbM = lc.match(/create\s+database\s+(\w+)/);
+    return;
+  }
+
+  // Bare CREATE DATABASE (not through mysql client)
+  if (/create\s+database/.test(lc)) {
+    const dbM = lc.match(/create\s+database\s+(?:if\s+not\s+exists\s+)?(\w+)/i);
     if (dbM) {
-      const dbName = dbM[1];
       vm.flags.databases = vm.flags.databases || {};
-      vm.flags.databases[dbName] = { tables:{} };
+      vm.flags.databases[dbM[1]] = { tables:{} };
       tPrint(`Query OK, 1 row affected`, 'tc-success');
-      const dbTask = EXAM.tasks.find(t => t.type==='custom' && /database|db|creat/.test((t.description||t.label).toLowerCase()) && taskStates[t.id]!=='completed');
+      const dbTask = EXAM.tasks.find(t => t.type==='custom' && /database|db/.test((t.description||t.label).toLowerCase()) && taskStates[t.id]!=='completed');
       if (dbTask) { vm.flags['custom_'+dbTask.id]=true; completeTask(dbTask); }
       evaluateAllTasks();
     }
-  } else {
-    tPrint(`[exec output: ${cmd}]`, 'tc-dim');
+    return;
   }
+
+  tPrint(`[exec output: ${cmd}]`, 'tc-dim');
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -3480,6 +3627,156 @@ function saveCat() {
   catBuf = [];
   document.getElementById('cmd-input').value = '';
   handleFileWrite(catPath, content);
+}
+
+// ══════════════════════════════════════════════════════════════
+//  SECTION 12b — MYSQL INTERACTIVE MODE
+// ══════════════════════════════════════════════════════════════
+function processMysqlInput(sql) {
+  const raw = sql.trim();
+  const lc  = raw.toLowerCase().replace(/;+\s*$/, '').trim();
+  tPrint(`mysql> ${raw}`, 'tc-prompt');
+
+  // Exit
+  if (lc === '\\q' || lc === 'quit' || lc === 'exit' || lc === '\\quit') {
+    setMysqlMode(false);
+    tPrint('Bye', 'tc-dim'); return;
+  }
+
+  // Help
+  if (lc === 'help' || lc === '\\h' || lc === '?') {
+    tPrint('List of MySQL commands: help, show databases, show tables, use <db>,', 'tc-dim');
+    tPrint('create database <name>, create table ..., insert into ..., select ...,', 'tc-dim');
+    tPrint('drop database <name>, \\q or quit to exit.', 'tc-dim');
+    tPrint('mysql> ', 'tc-prompt'); return;
+  }
+
+  // SHOW DATABASES
+  if (/^show\s+databases/.test(lc)) {
+    const dbs = Object.keys(vm.flags.databases || {});
+    tPrint('+--------------------+', 'tc-dim');
+    tPrint('| Database           |', 'tc-dim');
+    tPrint('+--------------------+', 'tc-dim');
+    ['information_schema','mysql','performance_schema','sys',...dbs].forEach(db =>
+      tPrint(`| ${db.padEnd(18)} |`, 'tc-default'));
+    tPrint('+--------------------+', 'tc-dim');
+    tPrint(`${4+dbs.length} rows in set (0.00 sec)`, 'tc-dim');
+    tPrint('mysql> ', 'tc-prompt'); return;
+  }
+
+  // SHOW TABLES
+  if (/^show\s+tables/.test(lc)) {
+    if (!mysqlCurrentDb) { tPrint('ERROR 1046 (3D000): No database selected', 'tc-error'); tPrint('mysql> ', 'tc-prompt'); return; }
+    const tables = Object.keys(vm.flags.databases?.[mysqlCurrentDb]?.tables || {});
+    if (tables.length === 0) { tPrint('Empty set (0.00 sec)', 'tc-dim'); }
+    else { tables.forEach(t => tPrint(`| ${t} |`, 'tc-default')); }
+    tPrint('mysql> ', 'tc-prompt'); return;
+  }
+
+  // USE db
+  if (/^use\s+/.test(lc)) {
+    const dbName = lc.replace(/^use\s+/, '').trim();
+    if (vm.flags.databases?.[dbName]) {
+      mysqlCurrentDb = dbName;
+      tPrint('Database changed', 'tc-success');
+    } else {
+      tPrint(`ERROR 1049 (42000): Unknown database '${dbName}'`, 'tc-error');
+    }
+    tPrint('mysql> ', 'tc-prompt'); return;
+  }
+
+  // CREATE DATABASE
+  if (/^create\s+database/.test(lc)) {
+    const dbM = lc.match(/create\s+database\s+(?:if\s+not\s+exists\s+)?(\w+)/);
+    if (dbM) {
+      const dbName = dbM[1];
+      vm.flags.databases = vm.flags.databases || {};
+      if (vm.flags.databases[dbName]) {
+        tPrint(`ERROR 1007 (HY000): Can't create database '${dbName}'; database exists`, 'tc-error');
+      } else {
+        vm.flags.databases[dbName] = { tables:{} };
+        tPrint('Query OK, 1 row affected (0.01 sec)', 'tc-success');
+        const dbTask = EXAM.tasks.find(t => t.type==='custom' && /database|db/.test((t.description||t.label).toLowerCase()) && taskStates[t.id]!=='completed');
+        if (dbTask) { vm.flags['custom_'+dbTask.id]=true; completeTask(dbTask); }
+        evaluateAllTasks();
+      }
+    }
+    tPrint('mysql> ', 'tc-prompt'); return;
+  }
+
+  // CREATE TABLE
+  if (/^create\s+table/.test(lc)) {
+    const tM = lc.match(/create\s+table\s+(?:if\s+not\s+exists\s+)?(\w+)/);
+    if (tM) {
+      if (!mysqlCurrentDb) { tPrint('ERROR 1046 (3D000): No database selected', 'tc-error'); tPrint('mysql> ', 'tc-prompt'); return; }
+      vm.flags.databases[mysqlCurrentDb] = vm.flags.databases[mysqlCurrentDb] || { tables:{} };
+      vm.flags.databases[mysqlCurrentDb].tables[tM[1]] = [];
+      tPrint('Query OK, 0 rows affected (0.04 sec)', 'tc-success');
+      const tableTask = EXAM.tasks.find(t => t.type==='custom' && /table/.test((t.description||t.label).toLowerCase()) && taskStates[t.id]!=='completed');
+      if (tableTask) { vm.flags['custom_'+tableTask.id]=true; completeTask(tableTask); }
+      evaluateAllTasks();
+    }
+    tPrint('mysql> ', 'tc-prompt'); return;
+  }
+
+  // INSERT INTO
+  if (/^insert\s+into/.test(lc)) {
+    tPrint('Query OK, 1 row affected (0.00 sec)', 'tc-success');
+    const insertTask = EXAM.tasks.find(t => t.type==='custom' && /insert|data|record|row/.test((t.description||t.label).toLowerCase()) && taskStates[t.id]!=='completed');
+    if (insertTask) { vm.flags['custom_'+insertTask.id]=true; completeTask(insertTask); evaluateAllTasks(); }
+    tPrint('mysql> ', 'tc-prompt'); return;
+  }
+
+  // SELECT
+  if (/^select/.test(lc)) {
+    if (/version\(\)/.test(lc)) {
+      tPrint('+-----------+', 'tc-dim'); tPrint('| version() |', 'tc-dim'); tPrint('+-----------+', 'tc-dim');
+      tPrint('| 8.0.35    |', 'tc-default'); tPrint('+-----------+', 'tc-dim'); tPrint('1 row in set (0.00 sec)', 'tc-dim');
+    } else if (/\*\s+from/.test(lc)) {
+      const tblM = lc.match(/from\s+(\w+)/);
+      const rows = tblM && mysqlCurrentDb ? (vm.flags.databases?.[mysqlCurrentDb]?.tables?.[tblM[1]] || []) : [];
+      if (rows.length === 0) tPrint('Empty set (0.00 sec)', 'tc-dim');
+      else rows.forEach(r => tPrint(JSON.stringify(r), 'tc-default'));
+    } else {
+      tPrint('Empty set (0.00 sec)', 'tc-dim');
+    }
+    tPrint('mysql> ', 'tc-prompt'); return;
+  }
+
+  // DROP DATABASE
+  if (/^drop\s+database/.test(lc)) {
+    const dbM = lc.match(/drop\s+database\s+(?:if\s+exists\s+)?(\w+)/);
+    if (dbM && vm.flags.databases?.[dbM[1]]) {
+      delete vm.flags.databases[dbM[1]];
+      if (mysqlCurrentDb === dbM[1]) mysqlCurrentDb = '';
+      tPrint('Query OK, 1 row affected (0.01 sec)', 'tc-success');
+    } else {
+      tPrint(`ERROR 1008 (HY000): Can't drop database; database doesn't exist`, 'tc-error');
+    }
+    tPrint('mysql> ', 'tc-prompt'); return;
+  }
+
+  // ALTER USER / SET PASSWORD (password change from within mysql)
+  if (/^alter\s+user|^set\s+password/.test(lc)) {
+    tPrint('Query OK, 0 rows affected (0.01 sec)', 'tc-success');
+    const passMatch = raw.match(/IDENTIFIED\s+BY\s+['"]([^'"]+)['"]/i)
+                   || raw.match(/=\s*PASSWORD\s*\(\s*['"]([^'"]+)['"]\s*\)/i);
+    vm.flags.dbRootPass = passMatch ? passMatch[1] : 'set';
+    const passTask = EXAM.tasks.find(t => t.type==='custom' && /password|pass|root/.test((t.description||t.label).toLowerCase()) && taskStates[t.id]!=='completed');
+    if (passTask) { vm.flags['custom_'+passTask.id]=true; completeTask(passTask); }
+    evaluateAllTasks();
+    tPrint('mysql> ', 'tc-prompt'); return;
+  }
+
+  // FLUSH
+  if (/^flush/.test(lc)) {
+    tPrint('Query OK, 0 rows affected (0.00 sec)', 'tc-success');
+    tPrint('mysql> ', 'tc-prompt'); return;
+  }
+
+  // Generic fallback
+  tPrint('Query OK, 0 rows affected (0.00 sec)', 'tc-success');
+  tPrint('mysql> ', 'tc-prompt');
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -3730,6 +4027,7 @@ function confirmReset() {
   vm.packages={}; vm.services={}; vm.files={}; vm.flags={}; vm.urlAccessed=false; vm.statusChecked=false;
   marks = {}; notified.clear(); hist = []; histIdx = -1;
   catMode = false; catBuf = []; catPath = '';
+  setMysqlMode(false);
   document.getElementById('term-output').innerHTML = '';
   document.getElementById('nano-overlay').style.display = 'none';
   document.getElementById('preview-overlay').style.display = 'none';
