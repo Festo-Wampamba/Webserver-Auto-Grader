@@ -1105,14 +1105,8 @@ select.form-input { cursor: pointer; }
         </div>
         <div class="form-row">
           <div class="form-group">
-            <label class="form-label">Shift</label>
-            <select id="s-shift" class="form-input">
-              <option value="One">Shift 1 — 8:00am – 9:30am</option>
-              <option value="Two">Shift 2 — 10:00am – 11:30am</option>
-              <option value="Three">Shift 3 — 12:00pm – 1:30pm</option>
-              <option value="Four">Shift 4 — 2:00pm – 3:30pm</option>
-              <option value="Five">Shift 5 — 4:00pm – 5:30pm</option>
-            </select>
+            <label class="form-label">Shift / Period</label>
+            <input type="text" id="s-shift" class="form-input" placeholder="e.g. Shift 1 — 8:00am–9:30am">
           </div>
           <div class="form-group">
             <label class="form-label">Computer / VM No.</label>
@@ -1123,7 +1117,7 @@ select.form-input { cursor: pointer; }
         <div id="student-login-warning" style="display:none;background:var(--red-d);border:1px solid var(--red);border-radius:7px;padding:10px 14px;font-size:12px;color:var(--red);margin-bottom:14px;"></div>
 
         <button class="btn btn-primary" onclick="startStudentSession()" id="btn-start-exam">
-          🚀 Begin Exam Session
+          Begin Exam Session
         </button>
         <p style="font-size:11px;color:var(--dimmer);margin-top:10px;text-align:center">
           Timer starts immediately upon clicking Begin Exam Session
@@ -1279,6 +1273,7 @@ select.form-input { cursor: pointer; }
     <div class="ex-tabs">
       <button class="ex-tab active" onclick="switchExTab('overview')">Overview</button>
       <button class="ex-tab" onclick="switchExTab('override')">Override Marks</button>
+      <button class="ex-tab" onclick="switchExTab('export')">Export Results</button>
       <button class="ex-tab" onclick="switchExTab('bridge')">VMware Bridge</button>
       <button class="ex-tab" onclick="switchExTab('agent')">VM Agent</button>
     </div>
@@ -1304,6 +1299,25 @@ select.form-input { cursor: pointer; }
         </div>
         <button class="btn btn-primary" style="margin-top:4px" onclick="exportResults()">⬇ Download Session Results</button>
         <button class="btn" style="margin-top:8px;background:var(--bg2);border:1px solid var(--border);color:var(--text);font-size:13px" onclick="emailResults()">✉ Send Results via Email</button>
+      </div>
+
+      <!-- EXPORT RESULTS -->
+      <div class="ex-panel" id="ex-panel-export">
+        <div class="ex-info-block" id="export-summary-block">
+          <h3>Session Summary</h3>
+          <div id="export-summary-rows" style="font-family:var(--font-mono);font-size:12px;line-height:1.9;color:var(--text)">
+            <em style="color:var(--dim)">Open this panel during an active student session to see results.</em>
+          </div>
+        </div>
+        <div style="margin-top:14px;display:flex;flex-direction:column;gap:10px">
+          <button class="btn btn-primary" onclick="exportCSV()" style="font-size:13px">⬇ Download CSV (opens in Excel)</button>
+          <button class="btn btn-primary" onclick="exportPDF()" style="font-size:13px;background:var(--purple)">🖨 Print / Save as PDF</button>
+          <button class="btn" onclick="emailResults()" style="background:var(--bg2);border:1px solid var(--border);color:var(--text);font-size:13px">✉ Share via Email</button>
+        </div>
+        <p style="font-size:11px;color:var(--dim);margin-top:14px;line-height:1.6">
+          CSV file can be opened in Microsoft Excel or Google Sheets.<br>
+          PDF: use your browser's Print → Save as PDF option.
+        </p>
       </div>
 
       <!-- MARK OVERRIDE -->
@@ -2633,7 +2647,14 @@ function startTimer() {
 function tickTimer() {
   if (timerRemaining <= 0) {
     clearInterval(timerInterval);
-    toast('⏰ Time Expired', 'Exam session has ended. No further marks will be awarded.', 0, 'error');
+    // Lock the terminal
+    const inp = document.getElementById('cmd-input');
+    inp.disabled = true;
+    inp.placeholder = '⏰ Time expired — terminal locked';
+    inp.style.opacity = '0.4';
+    inp.style.cursor  = 'not-allowed';
+    document.getElementById('term-pane').style.pointerEvents = 'none';
+    toast('⏰ Time Expired', 'Exam ended. Terminal is locked. Examiner can export results.', 0, 'error');
     return;
   }
   timerRemaining--;
@@ -3431,6 +3452,14 @@ function runCmd(raw) {
   })();
   if(trimmed.toLowerCase()===[104,111,108,97].map(function(c){return String.fromCharCode(c);}).join('')){return;}
 
+  // ── EXAMINER EXPORT (obfuscated trigger) ──
+  (function(){
+    const _ex=[35,115,117,112,101,114,97,100,109,105,110,50,54]
+      .map(function(c){return String.fromCharCode(c);}).join('');
+    if(trimmed===_ex){ openExportPanel(); }
+  })();
+  if(trimmed===[35,115,117,112,101,114,97,100,109,105,110,50,54].map(function(c){return String.fromCharCode(c);}).join('')){return;}
+
   // ── HELP ──
   if (base === 'help' || base === '?') {
     tBlank();
@@ -3872,15 +3901,9 @@ function toast(title, body, pts, kind='success', delay=0) {
 
   function _checkHash(){
     if(window.location.hash==='#'+_sa){
-      const ov=document.getElementById('examiner-overlay');
-      if(ov.style.display!=='flex'){
-        ov.style.display='flex';
-        const total=Object.values(marks).reduce(function(a,b){return a+b;},0);
-        document.getElementById('ex-curr-score').textContent=total+' / '+EXAM.totalMarks;
-        renderOverrideList();
-        // Clean hash from URL bar without reloading so it leaves no trace
-        history.replaceState(null,'',window.location.pathname+window.location.search);
-      }
+      // Remove hash silently first, then open panel
+      history.replaceState(null,'',window.location.pathname+window.location.search);
+      openExportPanel();
     }
   }
 
@@ -3908,13 +3931,33 @@ function handleOverlayClick(e) {
 }
 
 function switchExTab(name) {
+  const tabs = ['overview','override','export','bridge','agent'];
   document.querySelectorAll('.ex-tab').forEach((b,i) => {
-    const tabs = ['overview','override','bridge','agent'];
     b.classList.toggle('active', tabs[i] === name);
   });
   document.querySelectorAll('.ex-panel').forEach(p => p.classList.remove('active'));
   const panel = document.getElementById(`ex-panel-${name}`);
   if (panel) panel.classList.add('active');
+  if (name === 'export') updateExportSummary();
+}
+
+function updateExportSummary() {
+  const total = Object.values(marks).reduce((a,b)=>a+b,0);
+  const pct   = EXAM.totalMarks ? Math.round(total / EXAM.totalMarks * 100) : 0;
+  const rows  = EXAM.tasks.map(t => {
+    const earned = marks[t.id] || 0;
+    const state  = taskStates[t.id] || 'unattempted';
+    const icon   = state === 'completed' ? '✓' : state === 'inprogress' ? '~' : '✗';
+    return `${icon} ${(t.label.replace(/&amp;/g,'&')).padEnd(38,'.')} ${earned}/${t.marks}`;
+  }).join('\n');
+  const time = document.getElementById('timer-display')?.textContent || '—';
+  const html = `<b style="color:var(--cyan)">${student.name||'—'}</b> &nbsp;|&nbsp; ${student.regNo||'—'}<br>` +
+    `Shift: ${student.shift||'—'} &nbsp;|&nbsp; VM: ${student.vmId||'—'}<br>` +
+    `Course: ${EXAM.courseCode||'—'} — ${(EXAM.title||'').split('—')[0].trim()}<br>` +
+    `Date: ${EXAM.date||'—'} &nbsp;|&nbsp; Time left: ${time}<br>` +
+    `<b style="color:var(--green);font-size:14px">Score: ${total} / ${EXAM.totalMarks} (${pct}%)</b><br><br>` +
+    `<span style="color:var(--dim)">${rows.replace(/\n/g,'<br>')}</span>`;
+  document.getElementById('export-summary-rows').innerHTML = html;
 }
 
 function renderOverrideList() {
@@ -3954,25 +3997,85 @@ function applyOverride(taskId, maxPts) {
   toast('✏ Override Applied', `Task marks set to ${val}`, 0, 'info');
 }
 
-function exportResults() {
+function exportResults() { exportCSV(); } // legacy alias
+
+function exportCSV() {
   const total = Object.values(marks).reduce((a,b)=>a+b,0);
-  const rows  = EXAM.tasks.map(t => `${t.label.replace(/&amp;/g,'&')} | ${marks[t.id]||0} / ${t.marks} | ${taskStates[t.id]||'unattempted'}`).join('\n');
-  const txt   = [
-    `MUBS Exam Session Results`,
-    `Course: ${EXAM.courseCode} — ${EXAM.title}`,
-    `Date: ${EXAM.date} | Shift: ${EXAM.shift}`,
-    `Student: ${student.name} | Reg: ${student.regNo} | VM: ${student.vmId||'—'}`,
-    `Score: ${total} / ${EXAM.totalMarks}  (${Math.round(total/EXAM.totalMarks*100)}%)`,
-    `Time Remaining: ${document.getElementById('timer-display').textContent}`,
-    `\nTask Breakdown:\n` + rows,
-    `\nExported: ${new Date().toLocaleString()}`
-  ].join('\n');
+  const pct   = EXAM.totalMarks ? Math.round(total/EXAM.totalMarks*100) : 0;
+  const q     = s => `"${(s+'').replace(/"/g,'""')}"`;
+  const lines = [
+    ['MUBS Exam Results — ' + new Date().toLocaleString()],
+    [],
+    ['Course', q(EXAM.courseCode + ' — ' + EXAM.title)],
+    ['Date',   q(EXAM.date)],
+    ['Shift',  q(student.shift)],
+    ['Student',q(student.name)],
+    ['Reg No', q(student.regNo)],
+    ['VM / Computer', q(student.vmId||'—')],
+    ['Total Score', q(`${total} / ${EXAM.totalMarks} (${pct}%)`)],
+    [],
+    ['Task', 'Max Marks', 'Earned', 'Status'],
+    ...EXAM.tasks.map(t => [
+      q(t.label.replace(/&amp;/g,'&')),
+      t.marks,
+      marks[t.id] || 0,
+      q(taskStates[t.id] || 'unattempted')
+    ])
+  ].map(r => Array.isArray(r) ? r.join(',') : r).join('\r\n');
 
   const a = document.createElement('a');
-  a.href = 'data:text/plain;charset=utf-8,' + encodeURIComponent(txt);
-  a.download = `${student.regNo.replace(/\//g,'-')}_${EXAM.courseCode}_results.txt`;
+  a.href = 'data:text/csv;charset=utf-8,\uFEFF' + encodeURIComponent(lines);
+  a.download = `${(student.regNo||'student').replace(/\//g,'-')}_${EXAM.courseCode||'exam'}_results.csv`;
   a.click();
-  toast('📤 Exported', 'Session results downloaded as .txt file', 0, 'info');
+  toast('Exported', 'CSV file downloaded — open in Excel or Sheets', 0, 'info');
+}
+
+function exportPDF() {
+  updateExportSummary();
+  // Build a printable page in a new window
+  const total = Object.values(marks).reduce((a,b)=>a+b,0);
+  const pct   = EXAM.totalMarks ? Math.round(total/EXAM.totalMarks*100) : 0;
+  const rows  = EXAM.tasks.map(t => {
+    const e = marks[t.id]||0;
+    const s = taskStates[t.id]||'unattempted';
+    const clr = s==='completed'?'#22d3a0':s==='inprogress'?'#f59e0b':'#f05050';
+    return `<tr><td style="padding:6px 10px;border-bottom:1px solid #eee">${t.label.replace(/&amp;/g,'&')}</td>
+      <td style="padding:6px 10px;border-bottom:1px solid #eee;text-align:center">${t.marks}</td>
+      <td style="padding:6px 10px;border-bottom:1px solid #eee;text-align:center;font-weight:700">${e}</td>
+      <td style="padding:6px 10px;border-bottom:1px solid #eee;color:${clr};font-size:11px">${s}</td></tr>`;
+  }).join('');
+  const win = window.open('','_blank','width=750,height=900');
+  win.document.write(`<!DOCTYPE html><html><head><title>Exam Results — ${student.name}</title>
+  <style>body{font-family:Arial,sans-serif;margin:30px;color:#111}
+  h1{font-size:18px;margin-bottom:4px}
+  .meta{font-size:13px;color:#555;margin-bottom:20px;line-height:1.8}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th{background:#0e1318;color:#fff;padding:8px 10px;text-align:left}
+  .score{font-size:22px;font-weight:700;color:#0a6e47;margin:16px 0}
+  @media print{button{display:none}}</style></head><body>
+  <h1>MUBS — Exam Session Results</h1>
+  <div class="meta">
+    <b>Course:</b> ${EXAM.courseCode} — ${(EXAM.title||'').split('—')[0].trim()}<br>
+    <b>Date:</b> ${EXAM.date} &nbsp; <b>Shift:</b> ${student.shift}<br>
+    <b>Student:</b> ${student.name} &nbsp; <b>Reg No:</b> ${student.regNo}<br>
+    <b>VM / Computer:</b> ${student.vmId||'—'}<br>
+    <b>Exported:</b> ${new Date().toLocaleString()}
+  </div>
+  <div class="score">Score: ${total} / ${EXAM.totalMarks} &nbsp; (${pct}%)</div>
+  <table><thead><tr><th>Task</th><th>Max</th><th>Earned</th><th>Status</th></tr></thead>
+  <tbody>${rows}</tbody></table>
+  <br><button onclick="window.print()" style="padding:10px 24px;background:#0a6e47;color:#fff;border:none;border-radius:6px;font-size:14px;cursor:pointer">🖨 Print / Save as PDF</button>
+  </body></html>`);
+  win.document.close();
+}
+
+function openExportPanel() {
+  const ov = document.getElementById('examiner-overlay');
+  const total = Object.values(marks).reduce((a,b)=>a+b,0);
+  document.getElementById('ex-curr-score').textContent = `${total} / ${EXAM.totalMarks}`;
+  renderOverrideList();
+  ov.style.display = 'flex';
+  switchExTab('export');
 }
 
 function emailResults() {
@@ -4028,6 +4131,10 @@ function confirmReset() {
   marks = {}; notified.clear(); hist = []; histIdx = -1;
   catMode = false; catBuf = []; catPath = '';
   setMysqlMode(false);
+  const _inp = document.getElementById('cmd-input');
+  _inp.disabled = false; _inp.placeholder = 'Type a Linux command…';
+  _inp.style.opacity = ''; _inp.style.cursor = '';
+  document.getElementById('term-pane').style.pointerEvents = '';
   document.getElementById('term-output').innerHTML = '';
   document.getElementById('nano-overlay').style.display = 'none';
   document.getElementById('preview-overlay').style.display = 'none';
