@@ -1313,10 +1313,17 @@ select.form-input { cursor: pointer; }
           <button class="btn btn-primary" onclick="exportCSV()" style="font-size:13px">⬇ Download CSV (opens in Excel)</button>
           <button class="btn btn-primary" onclick="exportPDF()" style="font-size:13px;background:var(--purple)">🖨 Print / Save as PDF</button>
           <button class="btn" onclick="emailResults()" style="background:var(--bg2);border:1px solid var(--border);color:var(--text);font-size:13px">✉ Share via Email</button>
+          <div style="border-top:1px solid var(--border);padding-top:10px">
+            <p style="font-size:11px;color:var(--amber);margin-bottom:6px;font-weight:600">Share this exam to other computers:</p>
+            <button class="btn" onclick="exportStudentFile()" style="background:rgba(245,158,11,0.12);border:1px solid var(--amber);color:var(--amber);font-size:13px;font-weight:700">
+              📦 Download Exam HTML File
+            </button>
+            <p style="font-size:11px;color:var(--dim);margin-top:6px">Pre-loads this exact exam into a standalone HTML file. Students open it on any computer — no PDF upload needed.</p>
+          </div>
         </div>
         <p style="font-size:11px;color:var(--dim);margin-top:14px;line-height:1.6">
-          CSV file can be opened in Microsoft Excel or Google Sheets.<br>
-          PDF: use your browser's Print → Save as PDF option.
+          CSV opens in Microsoft Excel or Google Sheets.<br>
+          PDF: browser Print → Save as PDF.
         </p>
       </div>
 
@@ -2659,6 +2666,8 @@ function tickTimer() {
   }
   timerRemaining--;
   renderTimer();
+  // Persist snapshot every 60 s
+  if (timerRemaining % 60 === 0) saveSessionSnapshot();
 }
 
 function renderTimer() {
@@ -2720,8 +2729,14 @@ function evaluateAllTasks() {
 
     if (done && taskStates[task.id] !== 'completed') {
       completeTask(task);
-    } else if (inProg && taskStates[task.id] === 'unattempted') {
+    } else if (inProg) {
       taskStates[task.id] = 'inprogress';
+      // Calculate + award partial marks
+      const partial = calcPartialMarks(task, type, svcSt);
+      if (partial > 0 && (marks[task.id] || 0) < partial) {
+        marks[task.id] = partial;
+        saveSessionSnapshot();
+      }
       renderTaskPanel();
     }
   });
@@ -2729,10 +2744,35 @@ function evaluateAllTasks() {
   updateStatusBar();
 }
 
+function calcPartialMarks(task, type, svcSt) {
+  const full = task.marks;
+  if (type === 'start_and_enable') {
+    const running = !!(svcSt.running), enabled = !!(svcSt.enabled);
+    if (running && !enabled) return Math.max(1, Math.floor(full * 0.6));
+    if (!running && enabled) return Math.max(1, Math.floor(full * 0.3));
+  }
+  if (type === 'verify_content') {
+    const c = vm.files[VM_PROFILE.webRoot + '/index.html'] || '';
+    if (hasName(c) || hasReg(c)) return Math.floor(full / 2);
+  }
+  if (type === 'create_file') {
+    const c = vm.files[VM_PROFILE.webRoot + '/index.html'] || '';
+    if (c.length > 0) return Math.floor(full * 0.4);
+  }
+  if (type === 'access_url') {
+    // Running but not yet accessed = show 1 partial mark as signal
+    const svc = VM_PROFILE.mainSvc;
+    const st = vm.services[svc] || {};
+    if (st.running) return Math.max(1, Math.floor(full * 0.3));
+  }
+  return 0;
+}
+
 function completeTask(task, overridePts) {
   const pts = overridePts !== undefined ? overridePts : task.marks;
   taskStates[task.id] = 'completed';
   marks[task.id] = pts;
+  saveSessionSnapshot();
 
   if (!notified.has(task.id)) {
     notified.add(task.id);
@@ -3942,21 +3982,31 @@ function switchExTab(name) {
 }
 
 function updateExportSummary() {
+  // Use live session or fall back to snapshot
+  if (!student.name) loadSessionSnapshot();
+
   const total = Object.values(marks).reduce((a,b)=>a+b,0);
   const pct   = EXAM.totalMarks ? Math.round(total / EXAM.totalMarks * 100) : 0;
-  const rows  = EXAM.tasks.map(t => {
+  const time  = document.getElementById('timer-display')?.textContent || '—';
+
+  const rows = EXAM.tasks.map(t => {
     const earned = marks[t.id] || 0;
     const state  = taskStates[t.id] || 'unattempted';
     const icon   = state === 'completed' ? '✓' : state === 'inprogress' ? '~' : '✗';
-    return `${icon} ${(t.label.replace(/&amp;/g,'&')).padEnd(38,'.')} ${earned}/${t.marks}`;
-  }).join('\n');
-  const time = document.getElementById('timer-display')?.textContent || '—';
-  const html = `<b style="color:var(--cyan)">${student.name||'—'}</b> &nbsp;|&nbsp; ${student.regNo||'—'}<br>` +
+    const clr    = state === 'completed' ? 'var(--green)' : state === 'inprogress' ? 'var(--amber)' : 'var(--dim)';
+    const lbl    = (t.label||'').replace(/&amp;/g,'&');
+    return `<span style="color:${clr}">${icon} ${lbl}</span><span style="float:right;color:${clr}">${earned}/${t.marks}</span><br>`;
+  }).join('');
+
+  const noSession = !student.name;
+  const html =
+    (noSession ? `<span style="color:var(--amber);font-size:11px">⚠ Showing last saved session</span><br><br>` : '') +
+    `<b style="color:var(--cyan)">${student.name||'—'}</b> &nbsp;|&nbsp; ${student.regNo||'—'}<br>` +
     `Shift: ${student.shift||'—'} &nbsp;|&nbsp; VM: ${student.vmId||'—'}<br>` +
     `Course: ${EXAM.courseCode||'—'} — ${(EXAM.title||'').split('—')[0].trim()}<br>` +
     `Date: ${EXAM.date||'—'} &nbsp;|&nbsp; Time left: ${time}<br>` +
-    `<b style="color:var(--green);font-size:14px">Score: ${total} / ${EXAM.totalMarks} (${pct}%)</b><br><br>` +
-    `<span style="color:var(--dim)">${rows.replace(/\n/g,'<br>')}</span>`;
+    `<b style="color:var(--green);font-size:15px">Score: ${total} / ${EXAM.totalMarks} (${pct}%)</b>` +
+    `<br><br><div style="border-top:1px solid var(--border);padding-top:8px;overflow:hidden">${rows}</div>`;
   document.getElementById('export-summary-rows').innerHTML = html;
 }
 
@@ -3994,6 +4044,7 @@ function applyOverride(taskId, maxPts) {
   renderOverrideList();
   const total = Object.values(marks).reduce((a,b)=>a+b,0);
   document.getElementById('ex-curr-score').textContent = `${total} / ${EXAM.totalMarks}`;
+  saveSessionSnapshot();
   toast('✏ Override Applied', `Task marks set to ${val}`, 0, 'info');
 }
 
@@ -4070,12 +4121,76 @@ function exportPDF() {
 }
 
 function openExportPanel() {
+  // Try to restore last session if no active session exists
+  if (!student.name) loadSessionSnapshot();
   const ov = document.getElementById('examiner-overlay');
   const total = Object.values(marks).reduce((a,b)=>a+b,0);
   document.getElementById('ex-curr-score').textContent = `${total} / ${EXAM.totalMarks}`;
   renderOverrideList();
   ov.style.display = 'flex';
   switchExTab('export');
+}
+
+// ── SESSION PERSISTENCE ───────────────────────────────────────────────────────
+// Saves current student+marks to localStorage so #superadmin26 works even after
+// a URL-triggered page reload (GitHub Pages reloads on hash navigation).
+function saveSessionSnapshot() {
+  if (!student || !student.name) return;
+  try {
+    const snap = {
+      student: { ...student },
+      examMeta: {
+        courseCode: EXAM.courseCode, title: EXAM.title,
+        date: EXAM.date, totalMarks: EXAM.totalMarks,
+        shift: EXAM.shift
+      },
+      tasks: EXAM.tasks.map(t => ({
+        id: t.id, label: t.label, marks: t.marks, type: t.type
+      })),
+      marks: { ...marks },
+      taskStates: { ...taskStates },
+      timeLeft: document.getElementById('timer-display')?.textContent || '',
+      savedAt: Date.now()
+    };
+    localStorage.setItem('mubs_session_snap', JSON.stringify(snap));
+  } catch(_) {}
+}
+
+// Restore snapshot into export panel display (does NOT restore VM state)
+function loadSessionSnapshot() {
+  try {
+    const raw = localStorage.getItem('mubs_session_snap');
+    if (!raw) return false;
+    const snap = JSON.parse(raw);
+    // Reject snapshots older than 4 hours
+    if (Date.now() - snap.savedAt > 4 * 3600 * 1000) return false;
+
+    // If no active session, populate display objects from snapshot
+    if (!student.name) {
+      student = snap.student || {};
+      // Populate EXAM display fields from snapshot meta
+      const m = snap.examMeta || {};
+      document.getElementById('ex-course-code').textContent = `${m.courseCode||''} — ${(m.title||'').split('—')[0].trim()}`;
+      document.getElementById('ex-date').textContent  = m.date || '—';
+      document.getElementById('ex-s-name').textContent  = snap.student?.name  || '—';
+      document.getElementById('ex-s-reg').textContent   = snap.student?.regNo || '—';
+      document.getElementById('ex-s-shift').textContent = snap.student?.shift || '—';
+      document.getElementById('ex-s-vm').textContent    = snap.student?.vmId  || '—';
+      // Rebuild minimal marks/tasks for display
+      const total = Object.values(snap.marks||{}).reduce((a,b)=>a+b,0);
+      document.getElementById('ex-curr-score').textContent = `${total} / ${m.totalMarks||'?'}`;
+      // Inject into global state for export functions
+      Object.assign(marks, snap.marks || {});
+      Object.assign(taskStates, snap.taskStates || {});
+      EXAM.courseCode  = m.courseCode || EXAM.courseCode;
+      EXAM.title       = m.title      || EXAM.title;
+      EXAM.date        = m.date       || EXAM.date;
+      EXAM.totalMarks  = m.totalMarks || EXAM.totalMarks;
+      EXAM.shift       = m.shift      || EXAM.shift;
+      if (snap.tasks && snap.tasks.length) EXAM.tasks = snap.tasks;
+    }
+    return true;
+  } catch(_) { return false; }
 }
 
 function emailResults() {
@@ -4130,6 +4245,7 @@ function confirmReset() {
   vm.packages={}; vm.services={}; vm.files={}; vm.flags={}; vm.urlAccessed=false; vm.statusChecked=false;
   marks = {}; notified.clear(); hist = []; histIdx = -1;
   catMode = false; catBuf = []; catPath = '';
+  localStorage.removeItem('mubs_session_snap');
   setMysqlMode(false);
   const _inp = document.getElementById('cmd-input');
   _inp.disabled = false; _inp.placeholder = 'Type a Linux command…';
