@@ -2354,7 +2354,7 @@ function openReviewEditor() {
   reviewTaskCount = 0;
   (EXAM.tasks || []).forEach(t => addReviewTask(
     t.label.replace(/^\d+\.\s*/,''),
-    t.description,
+    t.description || t.desc || '',
     t.marks,
     t.type
   ));
@@ -2499,34 +2499,55 @@ function buildVMProfile() {
   VM_PROFILE = { packages:[], services:[], mainPkg:'', mainSvc:'',
                  webRoot:'/var/www/html', isWebServer:false, isContainer:false, isDatabase:false };
 
-  // Infer from task labels + descriptions + types
-  const allText = EXAM.tasks.map(t => (t.label + ' ' + t.description).toLowerCase()).join(' ');
+  // Helper: safe description from task (never returns undefined/null)
+  const tDesc = t => (t.description || t.desc || t.label || '').toLowerCase();
 
-  // Detect domain
+  // Infer from task labels + descriptions + types
+  const allText = EXAM.tasks.map(t => (t.label + ' ' + tDesc(t))).join(' ').toLowerCase();
+
+  // Detect exam domain
   VM_PROFILE.isWebServer = /apache|nginx|httpd|lighttpd|web\s*server/.test(allText);
   VM_PROFILE.isContainer = /docker|container|podman/.test(allText);
-  VM_PROFILE.isDatabase  = /mysql|mariadb|postgres|mongodb|database|db/.test(allText);
+  VM_PROFILE.isDatabase  = /mysql|mariadb|postgres|mongodb|database\s+server/.test(allText);
+  VM_PROFILE.isDNS       = /bind9?|named|dns\s*server|zone\s*file|nslookup|forward\s*lookup/.test(allText);
+  VM_PROFILE.isMail      = /postfix|sendmail|mail\s*server|smtp|dovecot/.test(allText);
+  VM_PROFILE.isFTP       = /vsftpd|proftpd|ftp\s*server/.test(allText);
+  VM_PROFILE.isSamba     = /samba|smb|cifs|file\s*shar/.test(allText);
 
   // Infer main package from install_package task description, then fallback to text scan
   const installTask = EXAM.tasks.find(t => t.type === 'install_package');
   if (installTask) {
-    const desc = (installTask.description + ' ' + installTask.label).toLowerCase();
+    const desc = (tDesc(installTask) + ' ' + installTask.label).toLowerCase();
     if      (/docker/.test(desc))          VM_PROFILE.mainPkg = 'docker.io';
     else if (/nginx/.test(desc))           VM_PROFILE.mainPkg = 'nginx';
     else if (/mysql/.test(desc))           VM_PROFILE.mainPkg = 'mysql-server';
     else if (/mariadb/.test(desc))         VM_PROFILE.mainPkg = 'mariadb-server';
     else if (/postgres/.test(desc))        VM_PROFILE.mainPkg = 'postgresql';
     else if (/apache|httpd/.test(desc))    VM_PROFILE.mainPkg = 'apache2';
+    else if (/bind9?|named/.test(desc))    VM_PROFILE.mainPkg = 'bind9';
+    else if (/postfix/.test(desc))         VM_PROFILE.mainPkg = 'postfix';
+    else if (/sendmail/.test(desc))        VM_PROFILE.mainPkg = 'sendmail';
+    else if (/vsftpd/.test(desc))          VM_PROFILE.mainPkg = 'vsftpd';
+    else if (/proftpd/.test(desc))         VM_PROFILE.mainPkg = 'proftpd';
+    else if (/samba/.test(desc))           VM_PROFILE.mainPkg = 'samba';
     else if (/php/.test(desc))             VM_PROFILE.mainPkg = 'php';
+    else if (/openssh/.test(desc))         VM_PROFILE.mainPkg = 'openssh-server';
     else {
-      // Try to extract package name from params or description words
-      const words = desc.split(/\s+/);
-      const pkgWord = words.find(w => /^[\w\.\-]+$/.test(w) && w.length > 3 && !/install|package|using|apt|the|for|and/.test(w));
-      VM_PROFILE.mainPkg = pkgWord || 'apache2';
+      // Extract the most likely package name from task text — exclude common English words
+      const STOPWORDS = /^(install|package|using|apt|get|the|for|and|that|this|with|from|server|service|dns|web|undefined|install|a|an|of|to|in|on|is|are|how|use|set|up|make|sure|your|you|its)$/;
+      const words = desc.replace(/[^a-z0-9\.\-]/g,' ').split(/\s+/);
+      const pkgWord = words.find(w => w.length > 2 && !STOPWORDS.test(w) && /^[\w][\w\.\-]+$/.test(w));
+      // Also scan the allText for a package-like word that matches known patterns
+      VM_PROFILE.mainPkg = pkgWord || (VM_PROFILE.isDNS ? 'bind9' : VM_PROFILE.isContainer ? 'docker.io' : VM_PROFILE.isDatabase ? 'mysql-server' : 'apache2');
     }
   } else {
-    VM_PROFILE.mainPkg = VM_PROFILE.isContainer ? 'docker.io'
-                       : VM_PROFILE.isDatabase  ? 'mysql-server'
+    VM_PROFILE.mainPkg = VM_PROFILE.isDNS       ? 'bind9'
+                       : VM_PROFILE.isContainer  ? 'docker.io'
+                       : VM_PROFILE.isDatabase   ? 'mysql-server'
+                       : VM_PROFILE.isMail       ? 'postfix'
+                       : VM_PROFILE.isFTP        ? 'vsftpd'
+                       : VM_PROFILE.isSamba      ? 'samba'
+                       : VM_PROFILE.isWebServer  ? 'apache2'
                        : 'apache2';
   }
 
@@ -2536,9 +2557,13 @@ function buildVMProfile() {
     'nginx': 'nginx', 'apache2': 'apache2', 'httpd': 'httpd',
     'mysql-server': 'mysql', 'mysql': 'mysql',
     'mariadb-server': 'mariadb', 'postgresql': 'postgresql',
+    'bind9': 'named', 'bind': 'named',
+    'postfix': 'postfix', 'sendmail': 'sendmail',
+    'vsftpd': 'vsftpd', 'proftpd': 'proftpd',
+    'samba': 'smbd', 'openssh-server': 'ssh',
     'php': 'php', 'php-fpm': 'php-fpm'
   };
-  VM_PROFILE.mainSvc = pkgToSvc[VM_PROFILE.mainPkg] || VM_PROFILE.mainPkg.replace(/-server$/,'');
+  VM_PROFILE.mainSvc = pkgToSvc[VM_PROFILE.mainPkg] || VM_PROFILE.mainPkg.replace(/-server$/,'').replace(/\.\w+$/,'');
 
   // Build aliases list — all names the student might type for this package
   VM_PROFILE.packages = buildPkgAliases(VM_PROFILE.mainPkg);
@@ -2549,7 +2574,7 @@ function buildVMProfile() {
     vm.flags.dockerImages = {}; // imageName -> pulled (bool)
     vm.flags.containers   = {}; // containerName -> { image, running, env }
     EXAM.tasks.forEach(t => {
-      const txt = (t.label + ' ' + t.description).toLowerCase();
+      const txt = (t.label + ' ' + (t.description||t.desc||'')).toLowerCase();
       const imgM = txt.match(/\b(mysql|postgres|nginx|ubuntu|redis|mongo|mariadb)(?::[\w\.\-]+)?\b/);
       if (imgM) vm.flags.dockerImages[imgM[0]] = false;
     });
@@ -2565,13 +2590,18 @@ function buildVMProfile() {
 }
 
 function buildPkgAliases(mainPkg) {
-  const base = mainPkg.replace(/-server$/,'').replace(/\.io$/,'');
+  const base = mainPkg.replace(/-server$/,'').replace(/\.io$/,'').replace(/-utils$/,'').replace(/-doc$/,'');
   const set  = new Set([mainPkg, base]);
-  if (mainPkg === 'docker.io')      { set.add('docker'); set.add('docker-ce'); set.add('docker-engine'); }
-  if (mainPkg === 'apache2')        { set.add('apache'); set.add('apache2'); }
-  if (mainPkg === 'mysql-server')   { set.add('mysql'); set.add('mysql-server'); set.add('mysql-server-8.0'); }
+  if (mainPkg === 'docker.io')      { set.add('docker'); set.add('docker-ce'); set.add('docker-engine'); set.add('docker.io'); }
+  if (mainPkg === 'apache2')        { set.add('apache'); set.add('apache2'); set.add('libapache2-mod-php'); }
+  if (mainPkg === 'mysql-server')   { set.add('mysql'); set.add('mysql-server'); set.add('mysql-server-8.0'); set.add('default-mysql-server'); }
   if (mainPkg === 'mariadb-server') { set.add('mariadb'); set.add('mariadb-server'); }
-  if (mainPkg === 'nginx')          { set.add('nginx'); set.add('nginx-full'); }
+  if (mainPkg === 'nginx')          { set.add('nginx'); set.add('nginx-full'); set.add('nginx-extras'); }
+  if (mainPkg === 'bind9')          { set.add('bind'); set.add('bind9'); set.add('bind9-utils'); set.add('bind9-doc'); set.add('bind9utils'); set.add('dnsutils'); }
+  if (mainPkg === 'postfix')        { set.add('postfix'); set.add('mailutils'); set.add('libsasl2-modules'); }
+  if (mainPkg === 'vsftpd')         { set.add('vsftpd'); set.add('ftp'); }
+  if (mainPkg === 'samba')          { set.add('samba'); set.add('samba-common'); set.add('smbclient'); }
+  if (mainPkg === 'openssh-server') { set.add('openssh-server'); set.add('ssh'); }
   return [...set];
 }
 
@@ -2580,11 +2610,23 @@ function buildSvcAliases(mainSvc) {
   if (mainSvc === 'docker') { set.add('docker.io'); set.add('docker-ce'); }
   if (mainSvc === 'apache2'){ set.add('apache'); set.add('httpd'); }
   if (mainSvc === 'mysql')  { set.add('mysql'); set.add('mysqld'); }
+  if (mainSvc === 'named')  { set.add('bind9'); set.add('named'); set.add('bind'); }
+  if (mainSvc === 'smbd')   { set.add('samba'); set.add('nmbd'); }
   return [...set];
 }
 
-function isKnownPkg(pkg)  { return VM_PROFILE.packages.includes(pkg.toLowerCase()); }
-function isKnownSvc(svc)  { return VM_PROFILE.services.includes(svc.toLowerCase()); }
+// Accept the exam's main package OR any package that appears in exam task text
+function isKnownPkg(pkg) {
+  const p = pkg.toLowerCase().trim();
+  if (VM_PROFILE.packages.includes(p)) return true;
+  // Generic: accept if the package name appears in any task label or description
+  const inExam = EXAM.tasks.some(t => {
+    const txt = ((t.label||'') + ' ' + (t.description||t.desc||'')).toLowerCase();
+    return txt.includes(p);
+  });
+  return inExam;
+}
+function isKnownSvc(svc) { return VM_PROFILE.services.includes(svc.toLowerCase()); }
 
 // ══════════════════════════════════════════════════════════════
 //  SECTION 5 — SIMULATOR LAUNCH
@@ -2895,7 +2937,7 @@ function renderTaskPanel() {
         <span class="task-state-icon">${icons[state]}</span>
         <span class="task-label">${task.label}</span>
       </div>
-      <div class="task-desc-text">${task.description}</div>
+      <div class="task-desc-text">${task.description || task.desc || ''}</div>
       <div class="task-bar-bg">
         <div class="task-bar-fill" style="width:${pct}%"></div>
       </div>
@@ -2947,13 +2989,18 @@ function updateStatusBar() {
   setDot('sb-service-dot', svcOk);
   setText('sb-service-label', svcOk ? `${svc}: ${svcEn?'Running+Enabled':'Running'}` : `${svc}: Stopped`);
 
-  // Show main file or container/db state
+  // Show main file or container/db/dns state
   if (VM_PROFILE.isContainer) {
     const imgs   = vm.flags.dockerImages || {};
     const pulled = Object.values(imgs).filter(Boolean).length;
     const total  = Object.keys(imgs).length;
     setDot('sb-file-dot', pulled > 0);
     setText('sb-file-label', `Images: ${pulled}/${total} pulled`);
+  } else if (VM_PROFILE.isDNS) {
+    const zones = vm.flags.dnsZoneConfigured ? 1 : 0;
+    const recs  = vm.flags.dnsARecords || 0;
+    setDot('sb-file-dot', zones > 0 || recs > 0);
+    setText('sb-file-label', `DNS: Zone${zones?'✓':'?'} | A-records: ${recs}`);
   } else if (VM_PROFILE.isDatabase) {
     const dbs  = Object.keys(vm.flags.databases||{}).length;
     setDot('sb-file-dot', vm.flags.dbRunning);
@@ -3068,6 +3115,24 @@ function runCmd(raw) {
         if (VM_PROFILE.isContainer) {
           tPrint('Created symlink for docker.service', 'tc-dim');
           tPrint('Docker is installed. Use "sudo docker run" to start containers.', 'tc-dim');
+        } else if (VM_PROFILE.isDNS) {
+          tPrint('Setting up bind9 (1:9.18.1) ...', 'tc-dim');
+          tPrint('Created symlink /etc/systemd/system/multi-user.target.wants/named.service', 'tc-dim');
+          tPrint('bind9 is now installed. Config files: /etc/bind/', 'tc-dim');
+          // Pre-create default bind9 config files in vm.files
+          vm.files['/etc/bind/named.conf'] = 'include "/etc/bind/named.conf.options";\ninclude "/etc/bind/named.conf.local";\n';
+          vm.files['/etc/bind/named.conf.local'] = '// Local zones go here\n';
+          vm.files['/etc/bind/named.conf.options'] = 'options {\n  directory "/var/cache/bind";\n  recursion yes;\n};\n';
+          vm.files['/etc/bind/db.local'] = '$TTL 604800\n@ IN SOA ns1.example.com. admin.example.com. (\n  1 ; Serial\n  604800 ; Refresh\n  86400 ; Retry\n  2419200 ; Expire\n  604800 )\n@ IN NS ns1.example.com.\n';
+        } else if (VM_PROFILE.isMail) {
+          tPrint(`Setting up ${mainPkg} ...`, 'tc-dim');
+          tPrint(`Created symlink /etc/systemd/system/multi-user.target.wants/${mainSvc}.service`, 'tc-dim');
+        } else if (VM_PROFILE.isFTP) {
+          tPrint('vsftpd is installed. Config: /etc/vsftpd.conf', 'tc-dim');
+          vm.files['/etc/vsftpd.conf'] = 'anonymous_enable=NO\nlocal_enable=YES\nwrite_enable=YES\n';
+        } else if (VM_PROFILE.isSamba) {
+          tPrint('samba is installed. Config: /etc/samba/smb.conf', 'tc-dim');
+          vm.files['/etc/samba/smb.conf'] = '[global]\n   workgroup = WORKGROUP\n   security = user\n';
         } else if (VM_PROFILE.isWebServer) {
           tPrint('Enabling module mpm_event.', 'tc-dim');
           tPrint(`Created symlink /etc/systemd/system/multi-user.target.wants/${mainSvc}.service`, 'tc-dim');
@@ -3517,6 +3582,78 @@ function runCmd(raw) {
     return;
   }
 
+  // ── NSLOOKUP ──
+  if (base === 'nslookup') {
+    if (!vm.packages[mainPkg] && !vm.packages['bind9']) {
+      tPrint('nslookup: command not found — install bind9 first', 'tc-error'); return;
+    }
+    const domain = args.find(a => !a.startsWith('-') && !a.startsWith('@')) || 'localhost';
+    const server = (args.find(a => a.startsWith('@')) || '@127.0.0.1').slice(1);
+    tPrint(`Server:\t\t${server}`, 'tc-dim');
+    tPrint(`Address:\t${server}#53`, 'tc-dim');
+    tPrint('', 'tc-dim');
+    tPrint(`Name:\t${domain}`, 'tc-default');
+    tPrint(`Address: 192.168.1.10`, 'tc-success');
+    vm.statusChecked = true;
+    // Award test-resolution task
+    const testTask = EXAM.tasks.find(t => t.type==='custom' && /nslookup|dig|resolut|test|name/.test((t.description||t.desc||t.label).toLowerCase()) && taskStates[t.id]!=='completed');
+    if (testTask) { vm.flags['custom_'+testTask.id]=true; completeTask(testTask); }
+    evaluateAllTasks(); return;
+  }
+
+  // ── DIG ──
+  if (base === 'dig') {
+    if (!vm.packages[mainPkg] && !vm.packages['bind9']) {
+      tPrint('dig: command not found — install bind9/dnsutils first', 'tc-error'); return;
+    }
+    const domain = args.find(a => !a.startsWith('-') && !a.startsWith('@')) || 'localhost';
+    tPrint(`; <<>> DiG 9.18.1 <<>> ${args.join(' ')}`, 'tc-dim');
+    tPrint(';; global options: +cmd', 'tc-dim');
+    tPrint(';; Got answer:', 'tc-dim');
+    tPrint(`;; QUESTION SECTION:\n;${domain}.\t\tIN\tA`, 'tc-dim');
+    tPrint(`;; ANSWER SECTION:\n${domain}.\t300\tIN\tA\t192.168.1.10`, 'tc-success');
+    tPrint(';; Query time: 1 msec', 'tc-dim');
+    vm.statusChecked = true;
+    const testTask = EXAM.tasks.find(t => t.type==='custom' && /nslookup|dig|resolut|test|name/.test((t.description||t.desc||t.label).toLowerCase()) && taskStates[t.id]!=='completed');
+    if (testTask) { vm.flags['custom_'+testTask.id]=true; completeTask(testTask); }
+    evaluateAllTasks(); return;
+  }
+
+  // ── NAMED-CHECKCONF ──
+  if (base === 'named-checkconf') {
+    if (!vm.packages[mainPkg] && !vm.packages['bind9']) {
+      tPrint('named-checkconf: command not found', 'tc-error'); return;
+    }
+    tPrint('named-checkconf: configuration OK', 'tc-success');
+    // Award validate/save task
+    const valTask = EXAM.tasks.find(t => t.type==='custom' && /valid|save|check|conf/.test((t.description||t.desc||t.label).toLowerCase()) && taskStates[t.id]!=='completed');
+    if (valTask) { vm.flags['custom_'+valTask.id]=true; completeTask(valTask); }
+    evaluateAllTasks(); return;
+  }
+
+  // ── NAMED-CHECKZONE ──
+  if (base === 'named-checkzone') {
+    if (!vm.packages[mainPkg] && !vm.packages['bind9']) {
+      tPrint('named-checkzone: command not found', 'tc-error'); return;
+    }
+    const zone = args[0] || 'example.com';
+    const file = args[1] || '/etc/bind/db.local';
+    tPrint(`zone ${zone}/IN: loaded serial 1`, 'tc-success');
+    tPrint('OK', 'tc-success');
+    const valTask = EXAM.tasks.find(t => t.type==='custom' && /valid|save|check|zone/.test((t.description||t.desc||t.label).toLowerCase()) && taskStates[t.id]!=='completed');
+    if (valTask) { vm.flags['custom_'+valTask.id]=true; completeTask(valTask); }
+    evaluateAllTasks(); return;
+  }
+
+  // ── GENERIC TOOLS (pass-through for common exam tools) ──
+  if (/^(ping|traceroute|ifconfig|netstat|ss|route|iptables|firewall-cmd|postfix|sendmail|ftp|smbclient)$/.test(base)) {
+    tPrint(`${base}: executed`, 'tc-dim');
+    // Check if this tool completes a custom task referencing it
+    const toolTask = EXAM.tasks.find(t => t.type==='custom' && t.label.toLowerCase().includes(base) && taskStates[t.id]!=='completed');
+    if (toolTask) { vm.flags['custom_'+toolTask.id]=true; completeTask(toolTask); evaluateAllTasks(); }
+    return;
+  }
+
   // ── UNKNOWN ──
   tPrint(`bash: ${tokens[0]}: command not found`, 'tc-error');
   tPrint(`Type 'help' for basic terminal info`, 'tc-dim');
@@ -3588,10 +3725,45 @@ function handleFileWrite(path, content) {
   if (norm === webIndex || norm === VM_PROFILE.webRoot + '/index.htm') {
     processHomepage(content);
   }
+
+  // ── DNS zone file analysis ──
+  if (VM_PROFILE.isDNS && /\/etc\/bind\//.test(norm)) {
+    const lc = content.toLowerCase();
+    // named.conf.local: detect forward lookup zone declaration
+    if (/named\.conf\.local/.test(norm)) {
+      if (/zone\s+["']?\w/.test(lc)) {
+        const zoneTask = EXAM.tasks.find(t => t.type==='custom' && /forward|zone|lookup|conf/.test((t.description||t.desc||t.label).toLowerCase()) && taskStates[t.id]!=='completed');
+        if (zoneTask) { vm.flags['custom_'+zoneTask.id]=true; completeTask(zoneTask); }
+        vm.flags.dnsZoneConfigured = true;
+      }
+    }
+    // db.* / zone files: detect A records (host records)
+    if (/db\.|\.zone/.test(norm.split('/').pop())) {
+      const aRecords = (content.match(/\bIN\s+A\b/gi) || []).length;
+      vm.flags.dnsARecords = Math.max(vm.flags.dnsARecords || 0, aRecords);
+      // Award "create host records" task if 4+ A records
+      if (aRecords >= 4) {
+        const hostTask = EXAM.tasks.find(t => t.type==='custom' && /host|record|a\s*record|four|4/.test((t.description||t.desc||t.label).toLowerCase()) && taskStates[t.id]!=='completed');
+        if (hostTask) { vm.flags['custom_'+hostTask.id]=true; completeTask(hostTask); }
+      } else if (aRecords >= 1) {
+        // Partial credit
+        const hostTask = EXAM.tasks.find(t => t.type==='custom' && /host|record/.test((t.description||t.desc||t.label).toLowerCase()) && taskStates[t.id]!=='completed');
+        if (hostTask) {
+          taskStates[hostTask.id] = 'inprogress';
+          marks[hostTask.id] = Math.round(hostTask.marks * (aRecords / 4));
+          saveSessionSnapshot();
+        }
+      }
+      // Validate task: zone file saved = partial validation
+      const valTask = EXAM.tasks.find(t => t.type==='custom' && /valid|save/.test((t.description||t.desc||t.label).toLowerCase()) && taskStates[t.id]!=='completed');
+      if (valTask && content.length > 100) { vm.flags['custom_'+valTask.id]=true; completeTask(valTask); }
+    }
+  }
+
   // Generic file flag for custom tasks referencing specific paths
   EXAM.tasks.forEach(t => {
     if (t.type === 'custom') {
-      const desc = (t.description + t.label).toLowerCase();
+      const desc = ((t.description||t.desc||'') + t.label).toLowerCase();
       if (desc.includes(norm.toLowerCase()) || desc.includes(path.split('/').pop())) {
         vm.flags['custom_'+t.id] = true;
       }
