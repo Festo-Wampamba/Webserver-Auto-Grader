@@ -3830,7 +3830,14 @@ document.getElementById('cmd-input').addEventListener('keydown', e => {
   if (e.key === 'Enter') {
     e.preventDefault();
     const cmd = input.value;
-    hist.unshift(cmd); histIdx = -1; input.value = '';
+    // Only push non-blank commands; skip consecutive duplicates (bash behaviour)
+    const trimmed = cmd.trim();
+    if (trimmed && hist[0] !== cmd) {
+      hist.unshift(cmd);
+      if (hist.length > 200) hist.length = 200; // cap history
+    }
+    histIdx = -1;
+    input.value = '';
     tBlank();
     runCmd(cmd);
     tBlank();
@@ -3838,13 +3845,27 @@ document.getElementById('cmd-input').addEventListener('keydown', e => {
   }
   if (e.key === 'ArrowUp') {
     e.preventDefault();
-    if (histIdx < hist.length - 1) { histIdx++; input.value = hist[histIdx] || ''; }
+    if (hist.length === 0) return;
+    if (histIdx < hist.length - 1) histIdx++;
+    input.value = hist[histIdx] || '';
+    // Move cursor to end so user can immediately edit
+    requestAnimationFrame(() => {
+      input.selectionStart = input.selectionEnd = input.value.length;
+    });
     return;
   }
   if (e.key === 'ArrowDown') {
     e.preventDefault();
-    if (histIdx > 0) { histIdx--; input.value = hist[histIdx] || ''; }
-    else { histIdx = -1; input.value = ''; }
+    if (histIdx <= 0) {
+      histIdx = -1;
+      input.value = '';
+    } else {
+      histIdx--;
+      input.value = hist[histIdx] || '';
+      requestAnimationFrame(() => {
+        input.selectionStart = input.selectionEnd = input.value.length;
+      });
+    }
     return;
   }
   if (e.ctrlKey && e.key === 'l') { e.preventDefault(); document.getElementById('term-output').innerHTML = ''; return; }
