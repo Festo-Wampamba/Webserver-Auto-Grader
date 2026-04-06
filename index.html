@@ -1344,6 +1344,10 @@ select.form-input { cursor: pointer; }
           <button class="btn btn-primary" onclick="exportPDF()" style="font-size:13px;background:var(--purple)">🖨 Print / Save as PDF</button>
           <button class="btn" onclick="emailResults()" style="background:var(--bg2);border:1px solid var(--border);color:var(--text);font-size:13px">✉ Share via Email</button>
           <div style="border-top:1px solid var(--border);padding-top:10px">
+            <button class="btn" onclick="exportAllSessionsCSV()" style="margin-bottom:10px;background:rgba(168,85,247,0.12);border:1px solid var(--purple);color:var(--purple);font-size:13px;font-weight:700">
+              ⬇ Download History of All Sessions (CSV)
+            </button>
+            <p style="font-size:11px;color:var(--dim);margin-bottom:14px">Exports combined results for every student who used this computer.</p>
             <p style="font-size:11px;color:var(--amber);margin-bottom:6px;font-weight:600">Share this exam to other computers:</p>
             <button class="btn" onclick="exportStudentFile()" style="background:rgba(245,158,11,0.12);border:1px solid var(--amber);color:var(--amber);font-size:13px;font-weight:700">
               📦 Download Exam HTML File
@@ -3778,6 +3782,13 @@ function runCmd(raw) {
     return;
   }
 
+  // ── EXIT ──
+  if (base === 'exit' || base === 'logout') {
+    tPrint('logout', 'tc-dim');
+    setTimeout(() => forceReset(), 800);
+    return;
+  }
+
   // ── UNKNOWN ──
   tPrint(`bash: ${tokens[0]}: command not found`, 'tc-error');
   tPrint(`Type 'help' for basic terminal info`, 'tc-dim');
@@ -4402,6 +4413,47 @@ function exportCSV() {
   toast('Exported', 'CSV file downloaded — open in Excel or Sheets', 0, 'info');
 }
 
+function exportAllSessionsCSV() {
+  let history = [];
+  try {
+    const rawHist = localStorage.getItem('mubs_all_sessions');
+    if (rawHist) history = JSON.parse(rawHist);
+  } catch(e) {}
+  
+  if (history.length === 0) {
+    toast('No History', 'There are no saved sessions on this computer yet.', 0, 'warn');
+    return;
+  }
+  
+  history.sort((a,b) => b.timestamp - a.timestamp);
+  
+  const q = s => `"${(s+'').replace(/"/g,'""')}"`;
+  const taskSet = new Set();
+  history.forEach(r => (r.tasks||[]).forEach(t => taskSet.add(t.label)));
+  const allTaskLabels = Array.from(taskSet);
+  
+  const headers = ['Date', 'Student Name', 'Reg No', 'Shift', 'Course', 'Total Marks', 'Earned', 'Percentage', ...allTaskLabels];
+  const lines = [headers.map(q).join(',')];
+  
+  history.forEach(r => {
+    const row = [
+      r.date, r.student?.name||'', r.student?.regNo||'', r.student?.shift||'', r.courseCode||'',
+      r.totalMarks||0, r.earned||0, Math.round((r.earned||0)/(r.totalMarks||1)*100) + '%'
+    ];
+    allTaskLabels.forEach(label => {
+      const task = (r.tasks||[]).find(t => t.label === label);
+      row.push(task ? task.earned : '');
+    });
+    lines.push(row.map(q).join(','));
+  });
+  
+  const a = document.createElement('a');
+  a.href = 'data:text/csv;charset=utf-8,\uFEFF' + encodeURIComponent(lines.join('\r\n'));
+  a.download = `MUBS_All_Sessions_${new Date().toISOString().slice(0,10)}.csv`;
+  a.click();
+  toast('Exported', `Exported ${history.length} session(s) to CSV`, 0, 'info');
+}
+
 function exportPDF() {
   updateExportSummary();
   // Build a printable page in a new window
@@ -4486,6 +4538,38 @@ function saveSessionSnapshot() {
       termOutput: document.getElementById('term-output').innerHTML
     };
     localStorage.setItem('mubs_session_snap', JSON.stringify(snap));
+    
+    // Multi-session history auto-save
+    let history = [];
+    try {
+      const rawHist = localStorage.getItem('mubs_all_sessions');
+      if (rawHist) history = JSON.parse(rawHist);
+    } catch(e) {}
+    
+    const total = Object.values(marks).reduce((a,b)=>a+b,0);
+    const existingIdx = history.findIndex(r => r.student && student && r.student.regNo === student.regNo && r.courseCode === EXAM.courseCode);
+    const record = {
+      timestamp: Date.now(),
+      date: new Date().toLocaleString(),
+      student: student,
+      courseCode: EXAM.courseCode,
+      title: EXAM.title,
+      totalMarks: EXAM.totalMarks,
+      earned: total,
+      tasks: EXAM.tasks.map(t => ({
+        label: (t.label||'').replace(/&amp;/g,'&'),
+        max: t.marks,
+        earned: marks[t.id] || 0,
+        status: taskStates[t.id] || 'unattempted'
+      }))
+    };
+    
+    if (existingIdx >= 0) {
+      history[existingIdx] = record;
+    } else {
+      history.push(record);
+    }
+    localStorage.setItem('mubs_all_sessions', JSON.stringify(history));
   } catch(_) {}
 }
 
@@ -4657,15 +4741,14 @@ function copyAgent() {
 // ══════════════════════════════════════════════════════════════
 //  SECTION 18 — RESET
 // ══════════════════════════════════════════════════════════════
-function confirmReset() {
-  if (!confirm('Reset all progress and return to setup screen?')) return;
+function forceReset() {
   clearInterval(timerInterval);
-  // vm reset happens inside buildVMProfile() at next launch
   vm.packages={}; vm.services={}; vm.files={}; vm.flags={}; vm.urlAccessed=false; vm.statusChecked=false;
   marks = {}; notified.clear(); hist = []; histIdx = -1;
   catMode = false; catBuf = []; catPath = '';
   localStorage.removeItem('mubs_session_snap');
   setMysqlMode(false);
+  student = {};
   const _inp = document.getElementById('cmd-input');
   _inp.disabled = false; _inp.placeholder = 'Type a Linux command…';
   _inp.style.opacity = ''; _inp.style.cursor = '';
@@ -4679,6 +4762,11 @@ function confirmReset() {
   document.getElementById('screen-setup').style.display = 'flex';
   document.getElementById('s-name').value = '';
   document.getElementById('s-reg').value  = '';
+}
+
+function confirmReset() {
+  if (!confirm('Reset all progress and return to setup screen?')) return;
+  forceReset();
 }
 
 // ══════════════════════════════════════════════════════════════
