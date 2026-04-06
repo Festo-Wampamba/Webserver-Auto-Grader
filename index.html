@@ -1361,8 +1361,8 @@ select.form-input { cursor: pointer; }
         </p>
       </div>
 
-      <!-- MARK OVERRIDE -->
-      <div class="ex-panel" id="ex-panel-override">
+      <!-- MARK OVERRIDE (hidden) -->
+      <div class="ex-panel" id="ex-panel-override" style="display:none">
         <p style="font-size:12px;color:var(--dim);margin-bottom:14px;line-height:1.6">
           Manually override marks for any task. Use this to award discretionary credit or correct auto-grading errors.
         </p>
@@ -4264,14 +4264,12 @@ function toast(title, body, pts, kind='success', delay=0) {
 
   function _checkHash(){
     const h = window.location.hash;
-    if (h === '#' + _sa + _ov) {
-      // Hidden override access — keep the tab hidden, open panel and switch covertly
+    if (h === '#' + _sa) {
+      // Examiner access
       _clearHash();
       openExportPanel();
-      // Switch to override panel silently without revealing the tab
-      setTimeout(function(){ switchExTab('override'); }, 50);
-    } else if (h === '#' + _sa) {
-      // Normal examiner access
+    } else if (h === '#' + _sa + _ov) {
+      // Override URL — clear hash silently, open examiner without override panel
       _clearHash();
       openExportPanel();
     }
@@ -4281,9 +4279,6 @@ function toast(title, body, pts, kind='success', delay=0) {
   document.addEventListener('DOMContentLoaded', _checkHash);
   window._closeExaminer = function(){
     document.getElementById('examiner-overlay').style.display = 'none';
-    // Hide override tab again when panel closes
-    const overrideTab = document.getElementById('ex-tab-override');
-    if (overrideTab) overrideTab.style.display = 'none';
   };
 })();
 
