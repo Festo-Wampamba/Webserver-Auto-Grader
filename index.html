@@ -2767,19 +2767,31 @@ function evaluateAllTasks() {
     } else if (type === 'check_status') {
       done = vm.statusChecked;
     } else if (type === 'custom') {
-      // custom tasks: award marks when relevant flags are set
       done = !!vm.flags['custom_' + task.id];
     }
 
     if (done && taskStates[task.id] !== 'completed') {
       completeTask(task);
     } else if (inProg) {
-      taskStates[task.id] = 'inprogress';
-      // Calculate + award partial marks
       const partial = calcPartialMarks(task, type, svcSt);
-      if (partial > 0 && (marks[task.id] || 0) < partial) {
+      const prev    = marks[task.id] || 0;
+
+      taskStates[task.id] = 'inprogress';
+
+      // Always update to the latest proportional value
+      if (partial !== prev) {
         marks[task.id] = partial;
         saveSessionSnapshot();
+
+        // Toast only when partial increases (don't spam on decreases)
+        if (partial > prev) {
+          const label    = task.label.replace(/&amp;/g, '&');
+          const remaining = roundHalf(task.marks - partial);
+          const what     = getPartialHint(task, type, svcSt);
+          toast(`🟡 Partial Credit — ${label}`,
+            `+${partial} mark${partial !== 1 ? 's' : ''} earned. ${what} (${remaining} mark${remaining !== 1 ? 's' : ''} remaining)`,
+            partial, 'warn', 200);
+        }
       }
       renderTaskPanel();
     }
@@ -2788,29 +2800,89 @@ function evaluateAllTasks() {
   updateStatusBar();
 }
 
-function calcPartialMarks(task, type, svcSt) {
-  const full = task.marks;
+// Returns a short hint about what the student still needs to do
+function getPartialHint(task, type, svcSt) {
   if (type === 'start_and_enable') {
     const running = !!(svcSt.running), enabled = !!(svcSt.enabled);
-    if (running && !enabled) return Math.max(1, Math.floor(full * 0.6));
-    if (!running && enabled) return Math.max(1, Math.floor(full * 0.3));
+    if (running  && !enabled) return 'Now enable it on boot (systemctl enable)';
+    if (!running && enabled)  return 'Now start the service (systemctl start)';
   }
   if (type === 'verify_content') {
     const c = vm.files[VM_PROFILE.webRoot + '/index.html'] || '';
-    if (hasName(c) || hasReg(c)) return Math.floor(full / 2);
+    if (!hasName(c)) return 'Add your full name to the page';
+    if (!hasReg(c))  return 'Add your registration number to the page';
   }
   if (type === 'create_file') {
     const c = vm.files[VM_PROFILE.webRoot + '/index.html'] || '';
-    if (c.length > 0) return Math.floor(full * 0.4);
+    if (!/<(html|head|body|h[1-6]|p|div)/i.test(c)) return 'Add proper HTML structure tags';
+    return 'Expand the file content for full marks';
   }
+  if (type === 'access_url')  return 'Now access via curl or the browser preview';
+  return 'Continue to complete the task';
+}
+
+
+// ──────────────────────────────────────────────────────────────
+//  PROPORTIONAL PARTIAL MARKS
+//  Divides task marks evenly across distinct sub-requirements.
+//  Returns the EXACT marks earned so far (may be a decimal).
+// ──────────────────────────────────────────────────────────────
+function calcPartialMarks(task, type, svcSt) {
+  const full = task.marks;
+
+  // ── start_and_enable: 2 sub-steps (start + enable) ──
+  // Each step = marks/2. Round to nearest 0.5.
+  if (type === 'start_and_enable') {
+    const running = !!(svcSt.running);
+    const enabled = !!(svcSt.enabled);
+    const perStep = full / 2;
+    const earned  = (running ? perStep : 0) + (enabled ? perStep : 0);
+    return roundHalf(earned);
+  }
+
+  // ── verify_content: 2 items (name + reg number) ──
+  // Each item = marks/2.
+  if (type === 'verify_content') {
+    const c = vm.files[VM_PROFILE.webRoot + '/index.html'] || '';
+    const nm  = hasName(c) ? 1 : 0;
+    const reg = hasReg(c)  ? 1 : 0;
+    const perItem = full / 2;
+    return roundHalf((nm + reg) * perItem);
+  }
+
+  // ── create_file: score on content quality bands ──
+  // 0 marks   → nothing written
+  // marks×0.3 → file exists but very short / plain text
+  // marks×0.6 → some HTML present but thin
+  // marks×0.8 → reasonable HTML structure
+  // marks×1.0 → full marks (handled by completeTask)
+  if (type === 'create_file') {
+    const c = vm.files[VM_PROFILE.webRoot + '/index.html'] || '';
+    if (!c) return 0;
+    const hasHtmlTags = /<[a-z][\s\S]*>/i.test(c);
+    const hasStructure = /<(html|head|body|h[1-6]|p|div)/i.test(c);
+    if (hasStructure)  return roundHalf(full * 0.8);
+    if (hasHtmlTags)   return roundHalf(full * 0.6);
+    return roundHalf(full * 0.3); // plain text only
+  }
+
+  // ── access_url: service running but not yet accessed ──
+  // Give proportional credit: running = prerequisite = marks/3 as signal
   if (type === 'access_url') {
-    // Running but not yet accessed = show 1 partial mark as signal
-    const svc = VM_PROFILE.mainSvc;
-    const st = vm.services[svc] || {};
-    if (st.running) return Math.max(1, Math.floor(full * 0.3));
+    const st = vm.services[VM_PROFILE.mainSvc] || {};
+    if (st.running) return roundHalf(full / 3);
   }
+
+  // ── start_service / enable_service / check_status / install_package ──
+  // These are binary — either done or not. No meaningful in-between.
   return 0;
 }
+
+// Round to nearest 0.5 (standard half-mark rounding)
+function roundHalf(n) {
+  return Math.round(n * 2) / 2;
+}
+
 
 function completeTask(task, overridePts) {
   const pts = overridePts !== undefined ? overridePts : task.marks;
@@ -2872,7 +2944,7 @@ function processHomepage(content) {
     }
   }
 
-  // Task 4: verify_content (4 marks)
+  // Task 4: verify_content — proportional: marks/2 per item (name, reg)
   const t4 = EXAM.tasks.find(t => t.type === 'verify_content');
   if (t4 && taskStates[t4.id] !== 'completed') {
     const nm  = hasName(content);
@@ -2881,15 +2953,17 @@ function processHomepage(content) {
     if (nm && reg) {
       completeTask(t4);
     } else if (nm || reg) {
-      const earned = 2;
+      const perItem = t4.marks / 2;
+      const earned  = roundHalf(perItem); // exactly 1 of 2 items
       marks[t4.id] = earned;
       taskStates[t4.id] = 'inprogress';
-      const missing = nm ? 'registration number' : 'name';
-      toast('🟡 Partial Credit', `${nm?'Name':'Reg number'} found — add your ${missing} for full marks`, earned, 'warn', 500);
+      const missing = nm ? 'registration number' : 'full name';
+      const remaining = roundHalf(t4.marks - earned);
+      toast('🟡 Partial Credit', `${nm ? 'Name' : 'Reg number'} found (+${earned} mark${earned !== 1 ? 's' : ''}). Add your ${missing} for the remaining ${remaining} mark${remaining !== 1 ? 's' : ''}.`, earned, 'warn', 500);
       renderTaskPanel(); updateScore();
     } else {
       taskStates[t4.id] = 'inprogress';
-      toast('💡 Hint', 'Add your name and registration number to earn 4 more marks', 0, 'info', 600);
+      toast('💡 Hint', 'Add your name and registration number to earn all marks for this task', 0, 'info', 600);
     }
   }
 
