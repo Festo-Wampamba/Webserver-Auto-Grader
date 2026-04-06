@@ -867,9 +867,40 @@ select.form-input { cursor: pointer; }
 .btn-gen-solutions:disabled { opacity: 0.4; cursor: not-allowed; }
 
 /* ─── END AI CSS ─── */
-@media (max-width: 780px) {
-  :root { --panel-w: 280px; }
+@media (max-width: 850px) {
+  :root { --panel-w: 100%; --header-h: auto; }
   .setup-card { width: 95vw; }
+  
+  #screen-setup { padding: 12px 8px 32px; }
+  .setup-brand, .setup-body { padding: 16px; }
+  .setup-brand-text h1 { font-size: 14px; }
+  
+  .form-row { flex-direction: column; gap: 0; }
+  .exam-meta-grid { grid-template-columns: 1fr; }
+  .task-editor-inputs { flex-direction: column; }
+  .task-editor-label-input, .task-editor-marks-input, .task-editor-type-input { width: 100%; }
+  
+  .sim-header { flex-wrap: wrap; padding: 10px; gap: 8px; }
+  .hdr-sep { display: none; }
+  .sim-student-tag { order: 10; width: 100%; text-align: center; margin-top: 4px; }
+  .timer-wrap, .score-wrap { flex: 1; justify-content: center; }
+  
+  .sim-body { flex-direction: column; overflow-y: auto; overflow-x: hidden; }
+  .term-pane { flex: none; height: 55vh; min-height: 350px; border-bottom: 3px solid var(--border); }
+  .task-panel { flex: none; height: auto; min-height: 400px; border-left: none; overflow: visible; }
+  #task-list { overflow: visible; }
+  
+  .status-bar { height: auto; flex-wrap: wrap; padding: 8px 12px; gap: 8px; }
+  .sb-item { flex: 1 1 45%; }
+  
+  .examiner-panel { width: 100vw; height: 100vh; }
+  .ex-hdr { padding: 16px; }
+  .ex-panel { padding: 16px; }
+  .ex-tabs { overflow-x: auto; white-space: nowrap; }
+  
+  .preview-window { width: 100vw; height: 100vh; max-width: none; border-radius: 0; }
+  #toast-stack { top: 16px; right: 16px; left: 16px; align-items: center; }
+  .toast-card { width: 100%; max-width: none; }
 }
 </style>
 </head>
@@ -2481,6 +2512,7 @@ function startStudentSession() {
 
   student = { name, regNo: reg, shift, vmId };
   launchSimulator();
+  saveSessionSnapshot();
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -4431,18 +4463,116 @@ function saveSessionSnapshot() {
       examMeta: {
         courseCode: EXAM.courseCode, title: EXAM.title,
         date: EXAM.date, totalMarks: EXAM.totalMarks,
-        shift: EXAM.shift
+        shift: EXAM.shift, durationMinutes: EXAM.durationMinutes, source: EXAM.source
       },
-      tasks: EXAM.tasks.map(t => ({
-        id: t.id, label: t.label, marks: t.marks, type: t.type
-      })),
+      tasks: EXAM.tasks,
       marks: { ...marks },
       taskStates: { ...taskStates },
       timeLeft: document.getElementById('timer-display')?.textContent || '',
-      savedAt: Date.now()
+      savedAt: Date.now(),
+      timerRemaining: timerRemaining,
+      hist: hist,
+      histIdx: histIdx,
+      vmPackages: vm.packages,
+      vmServices: vm.services,
+      vmFiles: vm.files,
+      vmFlags: vm.flags,
+      vmUrlAccessed: vm.urlAccessed,
+      vmStatusChecked: vm.statusChecked,
+      catMode: catMode,
+      catPath: catPath,
+      mysqlMode: mysqlMode,
+      mysqlCurrentDb: mysqlCurrentDb,
+      termOutput: document.getElementById('term-output').innerHTML
     };
     localStorage.setItem('mubs_session_snap', JSON.stringify(snap));
   } catch(_) {}
+}
+
+function restoreFullSession() {
+  try {
+    const raw = localStorage.getItem('mubs_session_snap');
+    if (!raw) return false;
+    const snap = JSON.parse(raw);
+    if (Date.now() - snap.savedAt > 4 * 3600 * 1000) return false;
+    
+    if (snap.student && snap.student.name) {
+      student = snap.student;
+      EXAM = { ...DEFAULT_EXAM, ...snap.examMeta, tasks: snap.tasks || DEFAULT_EXAM.tasks };
+      
+      marks = snap.marks || {};
+      taskStates = snap.taskStates || {};
+      timerRemaining = snap.timerRemaining !== undefined ? snap.timerRemaining : 90*60;
+      hist = snap.hist || [];
+      histIdx = snap.histIdx !== undefined ? snap.histIdx : -1;
+      catMode = !!snap.catMode;
+      catPath = snap.catPath || '';
+      mysqlMode = !!snap.mysqlMode;
+      mysqlCurrentDb = snap.mysqlCurrentDb || '';
+      
+      // Update UI
+      document.getElementById('hdr-course-title').textContent = (EXAM.title || '').split('—')[0].trim() || 'Web Server Administration';
+      document.getElementById('hdr-course-sub').textContent   = `${EXAM.courseCode} · MUBS · Shift ${EXAM.shift}`;
+      document.getElementById('hdr-student-tag').textContent  = `${student.name} | ${student.regNo}`;
+      document.getElementById('hdr-score-max').textContent    = `/ ${EXAM.totalMarks}`;
+      document.getElementById('panel-score-max').textContent  = ` / ${EXAM.totalMarks}`;
+      document.getElementById('panel-course-code').textContent = `${EXAM.courseCode} · Auto-graded`;
+      document.getElementById('term-bar-label').textContent   = `${student.name.split(' ')[0].toLowerCase()}@mubs-vm: ~`;
+      
+      document.getElementById('ex-course-code').textContent = EXAM.courseCode;
+      document.getElementById('ex-date').textContent        = EXAM.date;
+      document.getElementById('ex-duration').textContent    = (EXAM.durationMinutes || 90) + ' min';
+      document.getElementById('ex-total-marks').textContent = EXAM.totalMarks;
+      document.getElementById('ex-parser-source').textContent = EXAM.source || 'Restored';
+      document.getElementById('ex-s-name').textContent  = student.name;
+      document.getElementById('ex-s-reg').textContent   = student.regNo;
+      document.getElementById('ex-s-shift').textContent = 'Shift ' + student.shift;
+      document.getElementById('ex-s-vm').textContent    = student.vmId || '—';
+
+      buildVMProfile();
+      
+      // Restore VM
+      vm.packages = snap.vmPackages || {};
+      vm.services = snap.vmServices || {};
+      vm.files = snap.vmFiles || {};
+      vm.flags = snap.vmFlags || {};
+      vm.urlAccessed = !!snap.vmUrlAccessed;
+      vm.statusChecked = !!snap.vmStatusChecked;
+      
+      renderTaskPanel();
+      updateScore();
+      renderOverrideList();
+      updateStatusBar();
+      
+      document.getElementById('screen-setup').style.display = 'none';
+      document.getElementById('screen-sim').style.display = 'flex';
+      
+      startTimer();
+      
+      if (snap.termOutput) {
+        document.getElementById('term-output').innerHTML = snap.termOutput;
+      } else {
+        printBanner();
+      }
+      
+      const out = document.getElementById('term-output');
+      out.scrollTop = out.scrollHeight;
+      
+      setMysqlMode(mysqlMode);
+      if (catMode) {
+        const d = document.createElement('div');
+        d.className = 'tl tc-info';
+        d.textContent = `[Restored] > (Enter content. Type EOF on a new line or Ctrl+D to save to ${catPath})`;
+        out.appendChild(d);
+      }
+      
+      setTimeout(() => document.getElementById('cmd-input').focus(), 100);
+      return true;
+    }
+  } catch(e) {
+    console.error("Session restore failed", e);
+  }
+  return false;
 }
 
 // Restore snapshot into export panel display (does NOT restore VM state)
@@ -4608,8 +4738,15 @@ function exportStudentFile() {
 
 (async function init() {
   loadORKey();
+  
+  const restored = restoreFullSession();
+  
   await checkInternet();   // must await — isOnline used immediately on PDF upload
   initPDFWorker();         // preload worker in background while examiner sets up
+
+  if (restored) {
+    toast('Session Restored', 'Welcome back! Your previous progress was loaded.', 0, 'success');
+  }
 })();
 </script>
 </body>
