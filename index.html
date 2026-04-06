@@ -3029,10 +3029,13 @@ function renderTaskPanel() {
   list.innerHTML = '';
 
   EXAM.tasks.forEach(task => {
-    const state  = taskStates[task.id] || 'unattempted';
-    const earned = marks[task.id] || 0;
-    const pct    = (earned / task.marks) * 100;
-    const type   = TASK_TYPES[task.type] || {};
+    const rawState = taskStates[task.id] || 'unattempted';
+    const earned   = marks[task.id] || 0;
+    const pct      = (earned / task.marks) * 100;
+    const type     = TASK_TYPES[task.type] || {};
+
+    // If a task is marked 'completed' but earned < max marks, treat display as 'inprogress'
+    const state = (rawState === 'completed' && earned < task.marks) ? 'inprogress' : rawState;
 
     const icons = {
       unattempted: '⬜', inprogress: '🔵', completed: '✅', failed: '🔴'
@@ -4262,18 +4265,14 @@ function toast(title, body, pts, kind='success', delay=0) {
   function _checkHash(){
     const h = window.location.hash;
     if (h === '#' + _sa + _ov) {
-      // Hidden override access — show override tab and open on that tab
+      // Hidden override access — keep the tab hidden, open panel and switch covertly
       _clearHash();
-      const overrideTab = document.getElementById('ex-tab-override');
-      if (overrideTab) overrideTab.style.display = '';
       openExportPanel();
-      // Switch to override after a tick so the panel is visible
+      // Switch to override panel silently without revealing the tab
       setTimeout(function(){ switchExTab('override'); }, 50);
     } else if (h === '#' + _sa) {
-      // Normal examiner access — hide override tab
+      // Normal examiner access
       _clearHash();
-      const overrideTab = document.getElementById('ex-tab-override');
-      if (overrideTab) overrideTab.style.display = 'none';
       openExportPanel();
     }
   }
@@ -4322,11 +4321,13 @@ function updateExportSummary() {
   const time  = document.getElementById('timer-display')?.textContent || '—';
 
   const rows = EXAM.tasks.map(t => {
-    const earned = marks[t.id] || 0;
-    const state  = taskStates[t.id] || 'unattempted';
-    const icon   = state === 'completed' ? '✓' : state === 'inprogress' ? '~' : '✗';
-    const clr    = state === 'completed' ? 'var(--green)' : state === 'inprogress' ? 'var(--amber)' : 'var(--dim)';
-    const lbl    = (t.label||'').replace(/&amp;/g,'&');
+    const earned   = marks[t.id] || 0;
+    const rawState = taskStates[t.id] || 'unattempted';
+    // Show as 'inprogress' if partial marks even when internally 'completed'
+    const state    = (rawState === 'completed' && earned < t.marks) ? 'inprogress' : rawState;
+    const icon     = state === 'completed' ? '✓' : state === 'inprogress' ? '~' : '✗';
+    const clr      = state === 'completed' ? 'var(--green)' : state === 'inprogress' ? 'var(--amber)' : 'var(--dim)';
+    const lbl      = (t.label||'').replace(/&amp;/g,'&');
     return `<span style="color:${clr}">${icon} ${lbl}</span><span style="float:right;color:${clr}">${earned}/${t.marks}</span><br>`;
   }).join('');
 
