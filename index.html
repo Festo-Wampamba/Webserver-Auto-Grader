@@ -911,22 +911,12 @@ select.form-input { cursor: pointer; }
             <span class="ai-key-badge" id="ai-key-badge-global">CONFIGURE</span>
           </div>
 
-          <!-- Key 1: Llama 4 Maverick via OpenRouter -->
-          <div style="margin-bottom:10px">
-            <div style="font-size:11px;color:var(--dim);margin-bottom:5px;font-family:var(--font-mono)">
-              🦙 [1] Meta Llama 4 Maverick — OpenRouter
-            </div>
-            <div class="ai-key-row">
-              <input type="password" id="or-key-llama" class="ai-key-input" placeholder="sk-or-v1-… (OpenRouter key)">
-              <button class="btn-save-key" onclick="saveKey('llama')">Save</button>
-            </div>
-            <div class="ai-key-status empty" id="ai-key-status-llama">No key saved</div>
-          </div>
 
-          <!-- Key 2: DeepSeek V3 via OpenRouter -->
+
+          <!-- Key 1: DeepSeek V3 via OpenRouter -->
           <div style="margin-bottom:10px">
             <div style="font-size:11px;color:var(--dim);margin-bottom:5px;font-family:var(--font-mono)">
-              🧠 [2] DeepSeek V3 — OpenRouter
+              🧠 [1] DeepSeek V3 — OpenRouter
             </div>
             <div class="ai-key-row">
               <input type="password" id="or-key-deepseek" class="ai-key-input" placeholder="sk-or-v1-… (OpenRouter key)">
@@ -935,10 +925,10 @@ select.form-input { cursor: pointer; }
             <div class="ai-key-status empty" id="ai-key-status-deepseek">No key saved</div>
           </div>
 
-          <!-- Key 3: Gemini via Google AI Studio -->
+          <!-- Key 2: Gemini via Google AI Studio -->
           <div style="margin-bottom:10px">
             <div style="font-size:11px;color:var(--dim);margin-bottom:5px;font-family:var(--font-mono)">
-              ✨ [3] Gemini 2.0 Flash — Google AI Studio
+              ✨ [2] Gemini 2.0 Flash — Google AI Studio
             </div>
             <div class="ai-key-row">
               <input type="password" id="or-key-gemini" class="ai-key-input" placeholder="AIzaSy… (AI Studio key)">
@@ -947,10 +937,10 @@ select.form-input { cursor: pointer; }
             <div class="ai-key-status empty" id="ai-key-status-gemini">No key saved</div>
           </div>
 
-          <!-- Key 4: Groq -->
+          <!-- Key 3: Groq -->
           <div style="margin-bottom:6px">
             <div style="font-size:11px;color:var(--dim);margin-bottom:5px;font-family:var(--font-mono)">
-              ⚡ [4] LLaMA 3.3 70B — Groq
+              ⚡ [3] LLaMA 3.3 70B — Groq
             </div>
             <div class="ai-key-row">
               <input type="password" id="or-key-groq" class="ai-key-input" placeholder="gsk_… (Groq key)">
@@ -960,7 +950,7 @@ select.form-input { cursor: pointer; }
           </div>
 
           <p class="ai-key-help" style="margin-top:8px">
-            Keys saved locally in your browser only. Models tried in order [1]→[2]→[3]→[4], skipping any without a key.
+            Keys saved locally in your browser only. Models tried in order [1]→[2]→[3], skipping any without a key.
             Falls back to free OpenRouter models if all fail.
           </p>
         </div>
@@ -1106,12 +1096,21 @@ select.form-input { cursor: pointer; }
         <div class="form-row">
           <div class="form-group">
             <label class="form-label">Shift / Period</label>
-            <input type="text" id="s-shift" class="form-input" placeholder="e.g. Shift 1 — 8:00am–9:30am">
+            <select id="s-shift" class="form-input" style="cursor:pointer">
+              <option value="Shift 1 — 8:00am–9:30am">Shift 1 — 8:00am–9:30am</option>
+              <option value="Shift 2 — 9:45am–11:15am">Shift 2 — 9:45am–11:15am</option>
+              <option value="Shift 3 — 11:30am–1:00pm">Shift 3 — 11:30am–1:00pm</option>
+              <option value="Shift 4 — 2:00pm–3:30pm">Shift 4 — 2:00pm–3:30pm</option>
+              <option value="custom">✏ Custom…</option>
+            </select>
           </div>
           <div class="form-group">
             <label class="form-label">Computer / VM No.</label>
             <input type="text" id="s-vm" class="form-input" placeholder="e.g. LAB-PC-07">
           </div>
+        </div>
+        <div class="form-group" id="s-shift-custom-wrap" style="display:none;margin-top:-10px">
+          <input type="text" id="s-shift-custom" class="form-input" placeholder="e.g. Shift 5 — 4:00pm–5:30pm">
         </div>
 
         <div id="student-login-warning" style="display:none;background:var(--red-d);border:1px solid var(--red);border-radius:7px;padding:10px 14px;font-size:12px;color:var(--red);margin-bottom:14px;"></div>
@@ -1272,7 +1271,7 @@ select.form-input { cursor: pointer; }
     </div>
     <div class="ex-tabs">
       <button class="ex-tab active" onclick="switchExTab('overview')">Overview</button>
-      <button class="ex-tab" onclick="switchExTab('override')">Override Marks</button>
+      <button class="ex-tab" id="ex-tab-override" style="display:none" onclick="switchExTab('override')">Override Marks</button>
       <button class="ex-tab" onclick="switchExTab('export')">Export Results</button>
       <button class="ex-tab" onclick="switchExTab('bridge')">VMware Bridge</button>
       <button class="ex-tab" onclick="switchExTab('agent')">VM Agent</button>
@@ -1649,6 +1648,17 @@ function switchSetupTab(tab) {
   document.getElementById('tab-student').classList.toggle('active', tab==='student');
 }
 
+// Show/hide custom shift text input when "Custom…" is selected
+document.addEventListener('DOMContentLoaded', function() {
+  const shiftSel = document.getElementById('s-shift');
+  const customWrap = document.getElementById('s-shift-custom-wrap');
+  if (shiftSel && customWrap) {
+    shiftSel.addEventListener('change', function() {
+      customWrap.style.display = this.value === 'custom' ? 'block' : 'none';
+    });
+  }
+});
+
 function useDefaultExam() {
   EXAM = JSON.parse(JSON.stringify(DEFAULT_EXAM));
   document.getElementById('ex-parser-source').textContent = 'Default (BUC3219)';
@@ -1701,10 +1711,9 @@ setInterval(async () => {
 //  AI KEY MANAGEMENT — 4 providers (OpenRouter×2, Gemini, Groq)
 // ══════════════════════════════════════════════════════════════
 let _orKey = ''; // legacy alias
-let _keys  = { llama: '', deepseek: '', gemini: '', groq: '' };
+let _keys  = { deepseek: '', gemini: '', groq: '' };
 
 const KEY_LABELS = {
-  llama:    'Llama 4 Maverick (OpenRouter)',
   deepseek: 'DeepSeek V3 (OpenRouter)',
   gemini:   'Gemini 2.0 Flash (Google)',
   groq:     'LLaMA 3.3 70B (Groq)'
@@ -1712,15 +1721,11 @@ const KEY_LABELS = {
 
 function loadORKey() {
   try {
-    _keys.llama    = localStorage.getItem('mubs_or_key_llama')    || '';
     _keys.deepseek = localStorage.getItem('mubs_or_key_deepseek') || '';
     _keys.gemini   = localStorage.getItem('mubs_or_key_gemini')   || '';
     _keys.groq     = localStorage.getItem('mubs_or_key_groq')     || '';
-    // legacy single-key migration
-    const legacy = localStorage.getItem('mubs_or_key') || '';
-    if (legacy && !_keys.llama) { _keys.llama = legacy; }
   } catch(_) {}
-  _orKey = _keys.llama || _keys.deepseek || _keys.gemini || _keys.groq;
+  _orKey = _keys.deepseek || _keys.gemini || _keys.groq;
   updateAIKeyUI();
 }
 
@@ -1730,12 +1735,10 @@ function saveKey(slot) {
   _keys[slot] = val;
   try { localStorage.setItem(`mubs_or_key_${slot}`, val); } catch(_) {}
   document.getElementById(`or-key-${slot}`).value = '';
-  _orKey = _keys.llama || _keys.deepseek || _keys.gemini || _keys.groq;
+  _orKey = _keys.deepseek || _keys.gemini || _keys.groq;
   updateAIKeyUI();
   toast('Key Saved', `${KEY_LABELS[slot]} key stored in browser.`, 0, 'success');
 }
-
-function saveORKey() { saveKey('llama'); }
 
 function updateAIKeyUI() {
   Object.keys(_keys).forEach(slot => {
@@ -1827,14 +1830,14 @@ async function handlePDFUpload(input) {
     status.textContent = '⟳ Checking connection & preparing AI…';
 
     // ── Grab any unsaved keys from input fields (pasted but not yet clicked Save) ──
-    ['llama','deepseek','gemini','groq'].forEach(slot => {
+    ['deepseek','gemini','groq'].forEach(slot => {
       const v = (document.getElementById(`or-key-${slot}`)?.value || '').trim();
       if (v && !_keys[slot]) {
         _keys[slot] = v;
         try { localStorage.setItem(`mubs_or_key_${slot}`, v); } catch(_) {}
       }
     });
-    _orKey = _keys.llama || _keys.deepseek || _keys.gemini || _keys.groq;
+    _orKey = _keys.deepseek || _keys.gemini || _keys.groq;
     updateAIKeyUI();
 
     // ── Re-check connectivity right now (don't rely on cached isOnline from page load) ──
@@ -1899,25 +1902,21 @@ const OR_FREE_MODELS = [
 
 function buildModelQueue() {
   const queue = [];
-  const anyOrKey = _keys.llama || _keys.deepseek || '';
+  const anyOrKey = _keys.deepseek || '';
 
-  // 1. Llama 4 Maverick via OpenRouter
-  if (_keys.llama)
-    queue.push({ provider:'openrouter', model:'meta-llama/llama-4-maverick', key:_keys.llama, label:'Llama 4 Maverick' });
-
-  // 2. DeepSeek V3 via OpenRouter
+  // 1. DeepSeek V3 via OpenRouter
   if (_keys.deepseek)
     queue.push({ provider:'openrouter', model:'deepseek/deepseek-chat', key:_keys.deepseek, label:'DeepSeek V3' });
 
-  // 3. Gemini 2.0 Flash via Google AI Studio
+  // 2. Gemini 2.0 Flash via Google AI Studio
   if (_keys.gemini)
     queue.push({ provider:'gemini', model:'gemini-2.0-flash', key:_keys.gemini, label:'Gemini 2.0 Flash' });
 
-  // 4. LLaMA 3.3 70B via Groq
+  // 3. LLaMA 3.3 70B via Groq
   if (_keys.groq)
     queue.push({ provider:'groq', model:'llama-3.3-70b-versatile', key:_keys.groq, label:'LLaMA 3.3 70B (Groq)' });
 
-  // 5. Free OR fallbacks (only if we have at least one OR key)
+  // 4. Free OR fallbacks (only if we have at least one OR key)
   if (anyOrKey)
     OR_FREE_MODELS.forEach(m => queue.push({ provider:'openrouter', model:m, key:anyOrKey, label:m.split('/')[1] }));
 
@@ -2466,7 +2465,10 @@ function proceedWithReviewedExam() {
 function startStudentSession() {
   const name  = document.getElementById('s-name').value.trim();
   const reg   = document.getElementById('s-reg').value.trim();
-  const shift = document.getElementById('s-shift').value;
+  const shiftSel = document.getElementById('s-shift').value;
+  const shift = shiftSel === 'custom'
+    ? document.getElementById('s-shift-custom').value.trim() || 'Custom Shift'
+    : shiftSel;
   const vmId  = document.getElementById('s-vm').value.trim();
 
   const warn = document.getElementById('student-login-warning');
@@ -3080,7 +3082,23 @@ function runCmd(raw) {
 
   // ── CLEAR ──
   if (base === 'clear' || base === 'cls') {
-    document.getElementById('term-output').innerHTML = '';
+    // Only clear lines added after the banner — preserve task instructions
+    const out = document.getElementById('term-output');
+    const lines = out.querySelectorAll('.tl');
+    // Find the last separator line (banner footer) and keep everything up to it
+    let bannerEnd = -1;
+    lines.forEach((el, i) => {
+      if (el.textContent.startsWith('─────')) bannerEnd = i;
+    });
+    // Remove all lines after bannerEnd (i.e. command output only)
+    if (bannerEnd >= 0) {
+      const toRemove = [];
+      lines.forEach((el, i) => { if (i > bannerEnd) toRemove.push(el); });
+      toRemove.forEach(el => el.remove());
+    } else {
+      // No banner found — clear everything (pre-session state)
+      out.innerHTML = '';
+    }
     return;
   }
 
@@ -4107,24 +4125,49 @@ function toast(title, body, pts, kind='success', delay=0) {
 // ══════════════════════════════════════════════════════════════
 
 // Access control — URL hash gated (internal use only)
+// Normal #superadmin26 → overview/export only (no override tab visible)
+// Secret #superadmin26-override → enables override marks tab
 (function(){
-  const _sa=[115,117,112,101,114,97,100,109,105,110,50,54]
+  // Encoded to avoid plaintext discovery: 'superadmin26'
+  const _sa = [115,117,112,101,114,97,100,109,105,110,50,54]
+    .map(function(c){return String.fromCharCode(c);}).join('');
+  // Encoded suffix: '-override'
+  const _ov = [45,111,118,101,114,114,105,100,101]
     .map(function(c){return String.fromCharCode(c);}).join('');
 
+  function _clearHash(){
+    // Remove hash from address bar AND prevent the URL from being stored in browser history
+    if (window.history && window.history.replaceState) {
+      window.history.replaceState(null, '', window.location.pathname + window.location.search);
+    }
+  }
+
   function _checkHash(){
-    if(window.location.hash==='#'+_sa){
-      // Remove hash silently first, then open panel
-      history.replaceState(null,'',window.location.pathname+window.location.search);
+    const h = window.location.hash;
+    if (h === '#' + _sa + _ov) {
+      // Hidden override access — show override tab and open on that tab
+      _clearHash();
+      const overrideTab = document.getElementById('ex-tab-override');
+      if (overrideTab) overrideTab.style.display = '';
+      openExportPanel();
+      // Switch to override after a tick so the panel is visible
+      setTimeout(function(){ switchExTab('override'); }, 50);
+    } else if (h === '#' + _sa) {
+      // Normal examiner access — hide override tab
+      _clearHash();
+      const overrideTab = document.getElementById('ex-tab-override');
+      if (overrideTab) overrideTab.style.display = 'none';
       openExportPanel();
     }
   }
 
-  window.addEventListener('hashchange',_checkHash);
-  // also check on DOMContentLoaded in case the file is opened with hash already set
-  document.addEventListener('DOMContentLoaded',_checkHash);
-  // expose a private close-only toggle (no open path from UI)
-  window._closeExaminer=function(){
-    document.getElementById('examiner-overlay').style.display='none';
+  window.addEventListener('hashchange', _checkHash);
+  document.addEventListener('DOMContentLoaded', _checkHash);
+  window._closeExaminer = function(){
+    document.getElementById('examiner-overlay').style.display = 'none';
+    // Hide override tab again when panel closes
+    const overrideTab = document.getElementById('ex-tab-override');
+    if (overrideTab) overrideTab.style.display = 'none';
   };
 })();
 
