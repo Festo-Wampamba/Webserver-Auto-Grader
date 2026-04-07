@@ -526,6 +526,7 @@ select.form-input { cursor: pointer; }
 #preview-frame { flex: 1; border: none; width: 100%; }
 
 /* ─── EXAMINER OVERLAY ─── */
+#examiner-overlay { z-index: 9500 !important; }
 #examiner-overlay {
   display: none; position: fixed; inset: 0;
   background: rgba(0,0,0,0.8); z-index: 300;
@@ -604,7 +605,7 @@ select.form-input { cursor: pointer; }
 
 /* Time-expired full screen overlay */
 #expired-overlay {
-  display: none; position: fixed; inset: 0; z-index: 9000;
+  display: none; position: fixed; inset: 0; z-index: 1500;
   background: rgba(8,12,18,0.93); backdrop-filter: blur(8px);
   align-items: center; justify-content: center; flex-direction: column;
   animation: fadeIn 0.4s ease;
@@ -612,7 +613,7 @@ select.form-input { cursor: pointer; }
 #expired-overlay .exp-card {
   background: var(--bg2); border: 1px solid var(--red);
   border-radius: 16px; padding: 40px 48px; text-align: center;
-  max-width: 460px; width: 90%; box-shadow: 0 0 60px rgba(240,80,80,0.25);
+  max-width: 480px; width: 92%; box-shadow: 0 0 60px rgba(240,80,80,0.25);
 }
 #expired-overlay .exp-icon  { font-size: 52px; margin-bottom: 12px; animation: pulse-red 1s ease infinite; }
 #expired-overlay .exp-title { font-size: 24px; font-weight: 800; color: var(--red); margin-bottom: 6px; }
@@ -621,12 +622,46 @@ select.form-input { cursor: pointer; }
   font-family: var(--font-mono); font-size: 36px; font-weight: 900;
   color: var(--green); margin-bottom: 6px;
 }
-#expired-overlay .exp-score-label { font-size: 11px; color: var(--dim); margin-bottom: 28px; }
+#expired-overlay .exp-score-label { font-size: 11px; color: var(--dim); margin-bottom: 16px; }
 #expired-overlay .exp-hint {
   font-size: 12px; color: var(--amber); background: rgba(245,158,11,0.08);
   border: 1px solid rgba(245,158,11,0.25); border-radius: 8px;
-  padding: 10px 14px; line-height: 1.6;
+  padding: 10px 14px; line-height: 1.6; margin-bottom: 20px;
 }
+.exp-admin-section {
+  border-top: 1px solid rgba(255,255,255,0.08); padding-top: 18px; margin-top: 4px;
+}
+.exp-admin-label {
+  font-size: 10px; font-weight: 700; letter-spacing: 0.12em;
+  color: var(--dimmer); text-transform: uppercase; margin-bottom: 12px;
+}
+.exp-admin-btns {
+  display: flex; flex-direction: column; gap: 10px;
+}
+.btn-exp-examiner {
+  width: 100%; padding: 11px 16px; border-radius: 8px;
+  font-family: var(--font-ui); font-size: 13px; font-weight: 700;
+  cursor: pointer; border: none; transition: all 0.2s;
+  background: rgba(168,85,247,0.18); border: 1px solid var(--purple);
+  color: var(--purple);
+}
+.btn-exp-examiner:hover { background: var(--purple); color: #fff; }
+.btn-exp-unlock {
+  width: 100%; padding: 11px 16px; border-radius: 8px;
+  font-family: var(--font-ui); font-size: 13px; font-weight: 700;
+  cursor: pointer; transition: all 0.2s;
+  background: rgba(59,158,255,0.14); border: 1px solid var(--blue);
+  color: var(--blue);
+}
+.btn-exp-unlock:hover { background: var(--blue); color: #000; }
+.btn-exp-end {
+  width: 100%; padding: 11px 16px; border-radius: 8px;
+  font-family: var(--font-ui); font-size: 13px; font-weight: 700;
+  cursor: pointer; transition: all 0.2s;
+  background: rgba(240,80,80,0.12); border: 1px solid var(--red);
+  color: var(--red);
+}
+.btn-exp-end:hover { background: var(--red); color: #fff; }
 
 /* VMware bridge docs */
 .bridge-section { margin-bottom: 20px; }
@@ -1237,7 +1272,7 @@ select.form-input { cursor: pointer; }
 
       <div id="term-output"></div>
 
-      <div class="term-input-row">
+      <div class="term-input-row" id="input-row">
         <span class="prompt-str" id="prompt-str">student@mubs-vm:~$&nbsp;</span>
         <input id="cmd-input" type="text" autocomplete="off" spellcheck="false" placeholder="Type a Linux command…" autofocus>
       </div>
@@ -1335,10 +1370,18 @@ select.form-input { cursor: pointer; }
   <div class="exp-card">
     <div class="exp-icon">⏰</div>
     <div class="exp-title">Time Expired</div>
-    <div class="exp-sub">Your exam session has ended. Please stop working and wait for your examiner.</div>
+    <div class="exp-sub">The exam session has ended. Terminal is now locked for the student.</div>
     <div class="exp-score" id="exp-final-score">—</div>
     <div class="exp-score-label">Final Score</div>
-    <div class="exp-hint">🔒 Terminal is locked. The examiner will end this session shortly.</div>
+    <div class="exp-hint">🔒 Student terminal is locked. Use the admin controls below.</div>
+    <div class="exp-admin-section">
+      <div class="exp-admin-label">🔧 Examiner / Admin Controls</div>
+      <div class="exp-admin-btns">
+        <button class="btn-exp-examiner" onclick="openExaminerFromOverlay()">📊 Open Examiner Dashboard</button>
+        <button class="btn-exp-unlock" onclick="unlockTerminal()">🔓 Unlock Terminal (Super Admin)</button>
+        <button class="btn-exp-end" onclick="endSessionFromOverlay()">⏹ End Session &amp; Reset for Next Student</button>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -2769,6 +2812,11 @@ function launchSimulator() {
   const sim = document.getElementById('screen-sim');
   sim.style.display = 'flex';
 
+  if (window.history && window.history.pushState) {
+    history.replaceState({ setup: true }, '');
+    history.pushState({ sim: true }, '');
+  }
+
   // Start timer
   timerRemaining = EXAM.durationMinutes * 60;
   startTimer();
@@ -2789,17 +2837,32 @@ function startTimer() {
   renderTimer();
 }
 
+function lockTerminalUI() {
+  const inp = document.getElementById('cmd-input');
+  inp.disabled = true;
+  inp.placeholder = '⏰ Time expired — terminal locked';
+  inp.style.opacity = '0.4';
+  inp.style.cursor  = 'not-allowed';
+  // Only block the terminal input row, not the whole pane (examiner sidebar must still work)
+  const inputRow = document.getElementById('input-row');
+  if (inputRow) inputRow.style.pointerEvents = 'none';
+}
+
+function unlockTerminalUI() {
+  const inp = document.getElementById('cmd-input');
+  inp.disabled = false;
+  inp.placeholder = 'Type a Linux command...';
+  inp.style.opacity = '1';
+  inp.style.cursor  = 'text';
+  const inputRow = document.getElementById('input-row');
+  if (inputRow) inputRow.style.pointerEvents = 'auto';
+}
+
 function tickTimer() {
   if (timerRemaining <= 0) {
     clearInterval(timerInterval);
     saveSessionSnapshot(); // final snapshot before lock
-    // Lock the terminal
-    const inp = document.getElementById('cmd-input');
-    inp.disabled = true;
-    inp.placeholder = '⏰ Time expired — terminal locked';
-    inp.style.opacity = '0.4';
-    inp.style.cursor  = 'not-allowed';
-    document.getElementById('term-pane').style.pointerEvents = 'none';
+    lockTerminalUI();
     // Show the expired overlay with final score
     const total = Object.values(marks).reduce((a,b) => a+b, 0);
     const expEl = document.getElementById('exp-final-score');
@@ -2843,7 +2906,9 @@ function evaluateAllTasks() {
     const type = task.type;
 
     if (type === 'install_package') {
-      done = !!vm.packages[VM_PROFILE.mainPkg];
+      const descStr = (task.label + ' ' + (task.description||'')).toLowerCase();
+      if (/pull/.test(descStr)) done = !!vm.flags['custom_' + task.id];
+      else done = !!vm.packages[VM_PROFILE.mainPkg];
     } else if (type === 'start_service') {
       done = !!svcSt.running;
     } else if (type === 'enable_service') {
@@ -4851,13 +4916,65 @@ function confirmReset() {
 
 // Called by examiner to end a session after time expires / results saved
 function endSession() {
-  // First export results so they are saved
   saveSessionSnapshot();
-  // Then reset
   document.getElementById('expired-overlay').style.display = 'none';
   forceReset();
+  if (window.history && window.history.pushState) history.pushState({ setup: true }, '');
   toast('Session Ended', 'Ready for next student.', 0, 'info');
 }
+
+// End session directly from the expired overlay (no examiner panel needed)
+window.endSessionFromOverlay = function() {
+  if (!confirm('End this session and reset for the next student? Results are already saved.')) return;
+  endSession();
+};
+
+// Open examiner dashboard from the expired overlay
+window.openExaminerFromOverlay = function() {
+  // Hide overlay temporarily so examiner panel is accessible
+  document.getElementById('expired-overlay').style.display = 'none';
+  openExportPanel();
+  // When examiner panel closes, re-show overlay unless session was ended
+  const ov = document.getElementById('examiner-overlay');
+  const observer = new MutationObserver(function() {
+    if (ov.style.display === 'none') {
+      if (timerRemaining <= 0 && document.getElementById('screen-sim').style.display !== 'none') {
+        document.getElementById('expired-overlay').style.display = 'flex';
+      }
+      observer.disconnect();
+    }
+  });
+  observer.observe(ov, { attributes: true, attributeFilter: ['style'] });
+};
+
+window.unlockTerminal = function() {
+  const pwd = prompt('Enter super admin password to unlock terminal:');
+  const VALID = ['admin', 'hola', 'super', 'unlock', 'superadmin'];
+  if (pwd && VALID.includes(pwd.toLowerCase())) {
+    document.getElementById('expired-overlay').style.display = 'none';
+    unlockTerminalUI();
+    if (timerRemaining <= 0) {
+      timerRemaining = 600; // 10-min grace period
+      startTimer();
+    }
+    toast('🔓 Terminal Unlocked', 'Super admin granted 10-minute grace period.', 0, 'success');
+  } else if (pwd !== null) {
+    toast('Access Denied', 'Incorrect super admin password.', 0, 'error');
+  }
+};
+
+window.addEventListener('popstate', function(e) {
+  if (e.state && e.state.sim) {
+    document.getElementById('screen-setup').style.display = 'none';
+    document.getElementById('screen-sim').style.display = 'flex';
+  } else if (e.state && e.state.setup) {
+    document.getElementById('screen-sim').style.display = 'none';
+    document.getElementById('screen-setup').style.display = 'block';
+  } else {
+    document.getElementById('screen-sim').style.display = 'none';
+    document.getElementById('screen-setup').style.display = 'block';
+  }
+});
 
 // ══════════════════════════════════════════════════════════════
 //  INIT
