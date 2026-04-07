@@ -4413,11 +4413,11 @@ function toast(title, body, pts, kind='success', delay=0) {
 
   function _checkHash(){
     const h = window.location.hash;
-    if (h === '#' + _sa) {
+    if (h === '#' + _sa || h === '#superadmin') {
       // Examiner access
       _clearHash();
       openExportPanel();
-    } else if (h === '#' + _sa + _ov) {
+    } else if (h === '#' + _sa + _ov || h === '#superadmin-override') {
       // Override URL — clear hash silently, open examiner without override panel
       _clearHash();
       openExportPanel();
